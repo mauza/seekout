@@ -30,7 +30,7 @@ Requirements
 Installation
 ------------
 
-You can install seekout via pip (well not yet but hopefully soon):
+You can install seekout via pip:
 
 ```
 $ pip install seekout
