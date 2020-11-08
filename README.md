@@ -1,56 +1,40 @@
+[![PyPI](https://img.shields.io/pypi/v/seekout.svg)](https://pypi.org/project/seekout/)
+[![License](https://img.shields.io/pypi/l/seekout)](https://opensource.org/licenses/MIT)
+[![Python Version](https://img.shields.io/pypi/pyversions/seekout)](https://pypi.org/project/seekout/)
+[![Codecov](https://codecov.io/gh/mauza/seekout/branch/master/graph/badge.svg)](https://codecov.io/gh/mauza/seekout/)
+[![pre-commmit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
+[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-|PyPI| |Python Version| |License|
-
-|Read the Docs| |Tests| |Codecov|
-
-|pre-commit| |Black|
-
-.. |PyPI| image:: https://img.shields.io/pypi/v/{{cookiecutter.project_name}}.svg
-   :target: https://pypi.org/project/{{cookiecutter.project_name}}/
-   :alt: PyPI
-.. |Python Version| image:: https://img.shields.io/pypi/pyversions/{{cookiecutter.project_name}}
-   :target: https://pypi.org/project/{{cookiecutter.project_name}}
-   :alt: Python Version
-.. |License| image:: https://img.shields.io/pypi/l/{{cookiecutter.project_name}}
-   :target: https://opensource.org/licenses/MIT
-   :alt: License
-.. |Read the Docs| image:: https://img.shields.io/readthedocs/{{cookiecutter.project_name}}/latest.svg?label=Read%20the%20Docs
-   :target: https://{{cookiecutter.project_name}}.readthedocs.io/
-   :alt: Read the documentation at https://{{cookiecutter.project_name}}.readthedocs.io/
-.. |Tests| image:: https://github.com/{{cookiecutter.github_user}}/{{cookiecutter.project_name}}/workflows/Tests/badge.svg
-   :target: https://github.com/{{cookiecutter.github_user}}/{{cookiecutter.project_name}}/actions?workflow=Tests
-   :alt: Tests
-.. |Codecov| image:: https://codecov.io/gh/{{cookiecutter.github_user}}/{{cookiecutter.project_name}}/branch/master/graph/badge.svg
-   :target: https://codecov.io/gh/{{cookiecutter.github_user}}/{{cookiecutter.project_name}}
-   :alt: Codecov
-.. |pre-commit| image:: https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white
-   :target: https://github.com/pre-commit/pre-commit
-   :alt: pre-commit
-.. |Black| image:: https://img.shields.io/badge/code%20style-black-000000.svg
-   :target: https://github.com/psf/black
-   :alt: Black
+# Seekout
+This project seeks to make it easy to parse html from certain sellers websites so that you can find an item
+you are looking for the for price you are looking to pay.
 
 
 Features
 --------
-
-* TODO
+[ Work in progress ]
+* Get raw html using Selenium
+* Parsers to collect information about products including prices, if they are in stock, etc.
+  - Newegg
+  - Bestbuy
+  - Amazon
 
 
 Requirements
 ------------
 
-* TODO
+* An environment with a browser (preferably one with headless capabilities)
+* a python environment
 
 
 Installation
 ------------
 
-You can install seekout via pip_ from PyPI_:
+You can install seekout via pip (well not yet but hopefully soon):
 
-.. code:: console
-
-   $ pip install seekout
+```
+$ pip install seekout
+```
 
 
 Usage
@@ -62,14 +46,20 @@ Usage
 Contributing
 ------------
 
-Contributions are very welcome.
-To learn more, see the `Contributor Guide`_.
+I would love to get help building out the parsers for certain websites.
+I'm working on a few I care about currently, but I'm sure there are more
+features and sites that others would love to have included as well.
+
+Remember:
+ - Be nice
+ - Pull Requests WELCOME!
+ - Submit an issue
 
 
 License
 -------
 
-Distributed under the terms of the MIT_ license,
+Distributed under the terms of the [MIT license](LICENSE.md), <br>
 *seekout* is free and open source software.
 
 
@@ -77,8 +67,4 @@ Issues
 ------
 
 If you encounter any problems,
-please `file an issue`_ along with a detailed description.
-
-
-Credits
--------
+please `file an issue` along with a detailed description.
