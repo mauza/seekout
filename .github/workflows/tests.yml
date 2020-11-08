@@ -6,21 +6,29 @@ on:
 
 jobs:
   tests:
-    name: test
-    runs-on: ubuntu-latest
+    name: |
+      {{ "${{ matrix.session }} ${{ matrix.python-version }} / ${{ matrix.os }}" }}
+    runs-on: |
+      {{ "${{ matrix.os }}" }}
     strategy:
       fail-fast: false
-
+      matrix:
+        include:
+          - { python-version: 3.8, os: ubuntu-latest, session: "pre-commit" }
+          - { python-version: 3.8, os: ubuntu-latest, session: "safety" }
+          - { python-version: 3.8, os: ubuntu-latest, session: "tests" }
     env:
-      NOXSESSION: "Tests"
+      NOXSESSION: |
+        {{ "${{ matrix.session }}" }}
 
     steps:
       - name: Check out the repository
         uses: actions/checkout@v2.3.2
-      - name: Set up Python 3.8
+      - name: Set up Python {{ "${{ matrix.python-version }}" }}
         uses: actions/setup-python@v2.1.2
         with:
-          python-version: 3.8
+          python-version: |
+            {{ "${{ matrix.python-version }}" }}
       - name: Upgrade pip
         run: |
           pip install --constraint=.github/workflows/constraints.txt pip
@@ -35,9 +43,11 @@ jobs:
           nox --version
       - name: Run Nox
         run: |
-          nox --force-color --python=3.8
+          nox --force-color --python=${{ "{{" }} matrix.python-version {{ "}}" }}
       - name: Create coverage report
+        if: always() && matrix.session == 'tests'
         run: |
           nox --force-color --session=coverage -- xml
       - name: Upload coverage report
+        if: always() && matrix.session == 'tests'
         uses: codecov/codecov-action@v1.0.12
