@@ -43,7 +43,7 @@ jobs:
           nox --version
       - name: Run Nox
         run: |
-          nox --force-color --python=${{ "{{" }} matrix.python-version {{ "}}" }}
+          nox --force-color --python=3.8
       - name: Create coverage report
         if: always() && matrix.session == 'tests'
         run: |
