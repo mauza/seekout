@@ -1,4 +1,4 @@
-from seekout.webdriver import DriverType, SeleniumDriver
+from seekout.drivers.selenium import DriverType, SeleniumDriver
 
 
 def test_selenium_driver():
