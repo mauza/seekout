@@ -49,7 +49,7 @@ class SeleniumDriver:
         else:
             self.reload_count += 1
 
-    def get_html(self, url: str):
+    def get_html(self, url: str) -> str:
         self.ensure_fresh_driver()
         self.driver.get(url)
         return self.driver.page_source
