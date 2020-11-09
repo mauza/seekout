@@ -39,8 +39,24 @@ $ pip install seekout
 
 Usage
 -----
+[WIP]
+```
+from seekout.drivers.selenium import SeleniumDriver, DriverType
+from seekout.parsers.newegg import NeweggSearch
 
-* TODO
+webdriver_path = "geckodriver"
+binary = "/usr/bin/firefox"
+
+driver = SeleniumDriver(binary, webdriver_path, DriverType.FIREFOX)
+
+
+url = "https://www.newegg.com/p/pl?N=100007709%20601357282"
+html = driver.get_html(url)
+newegg_search = NeweggSearch(html)
+
+for product in newegg_search.products:
+    print(p.__dict__)
+```
 
 
 Contributing
