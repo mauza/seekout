@@ -1,9 +1,6 @@
 from bs4 import BeautifulSoup
 
 
-PARSER = "html.parser"
-
-
 class NotImplementedError(Exception):
     pass
 
@@ -11,10 +8,11 @@ class NotImplementedError(Exception):
 class Page:
     html = ""
     soup = None
+    parser = "html.parser"
 
     def __init__(self, html):
         self.html = html
-        self.soup = BeautifulSoup(html, PARSER)
+        self.soup = BeautifulSoup(html, self.parser)
         self._parse_page()
 
     def _parse_page(self):

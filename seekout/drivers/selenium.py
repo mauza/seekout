@@ -33,6 +33,10 @@ class SeleniumDriver:
         self.driver_type = driver_type
         self.driver = self.get_driver()
 
+    def __del__(self):
+        self.driver.close()
+        self.driver.quit()
+
     def get_driver(self):
         if self.driver_type == DriverType.FIREFOX:
             return firefox_driver(self.binary, self.webdriver_path)
