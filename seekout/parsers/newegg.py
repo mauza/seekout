@@ -3,7 +3,7 @@ from seekout.parsers.generic import ProductSearchPage
 from seekout.parsers.utils import parse_price
 
 
-def parse_product(soup):
+def parse_newegg_product(soup):
     title = soup.find("a", {"class": "item-title"}).text
     url = soup.find("a", {"class": "item-title"})["href"]
     price = parse_price(soup.find("li", {"class": "price-current"}).text)
@@ -37,7 +37,7 @@ def parse_product(soup):
 class NeweggSearch(ProductSearchPage):
     def _parse_page(self):
         raw_products = self._get_products()
-        products = list(map(parse_product, raw_products))
+        products = list(map(parse_newegg_product, raw_products))
         self.products += products
 
     def _get_products(self):

@@ -13,7 +13,7 @@ def parse_rating(text):
     return None
 
 
-def parse_product(soup):
+def parse_bestbuy_product(soup):
     title = soup.find("div", {"class": "sku-title"}).text
     url = soup.find("h4", {"class": "sku-header"}).find("a")["href"]
     price = parse_price(soup.find("div", {"class": "priceView-customer-price"}).text)
@@ -41,7 +41,7 @@ def parse_product(soup):
 class BestBuySearch(ProductSearchPage):
     def _parse_page(self):
         raw_products = self._get_products()
-        products = list(map(parse_product, raw_products))
+        products = list(map(parse_bestbuy_product, raw_products))
         self.products += products
 
     def _get_products(self):
