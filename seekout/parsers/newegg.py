@@ -1,11 +1,12 @@
 from seekout.objects.product import Product
 from seekout.parsers.generic import ProductSearchPage
+from seekout.parsers.utils import parse_price
 
 
 def parse_product(soup):
     title = soup.find("a", {"class": "item-title"}).text
     url = soup.find("a", {"class": "item-title"})["href"]
-    price = soup.find("li", {"class": "price-current"}).text
+    price = parse_price(soup.find("li", {"class": "price-current"}).text)
     if price:
         in_stock = True
     else:
