@@ -1,11 +1,5 @@
-[![PyPI](https://img.shields.io/pypi/v/seekout.svg)](https://pypi.org/project/seekout/)
-[![License](https://img.shields.io/pypi/l/seekout)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/pypi/pyversions/seekout)](https://pypi.org/project/seekout/)
-[![Codecov](https://codecov.io/gh/mauza/seekout/branch/master/graph/badge.svg)](https://codecov.io/gh/mauza/seekout/)
-[![pre-commmit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit)
-[![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+# Seekout [![PyPI](https://img.shields.io/pypi/v/seekout.svg)](https://pypi.org/project/seekout/) [![License](https://img.shields.io/pypi/l/seekout)](https://opensource.org/licenses/MIT) [![Python Version](https://img.shields.io/pypi/pyversions/seekout)](https://pypi.org/project/seekout/) [![Codecov](https://codecov.io/gh/mauza/seekout/branch/master/graph/badge.svg)](https://codecov.io/gh/mauza/seekout/) [![pre-commmit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit) [![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-# Seekout
 This project seeks to make it easy to parse html from certain sellers websites so that you can find an item
 you are looking for the for price you are looking to pay.
 
@@ -39,7 +33,8 @@ $ pip install seekout
 
 Usage
 -----
-[WIP]
+[ Work in progress ]
+
 ```
 from seekout.drivers.selenium import SeleniumDriver, DriverType
 from seekout.parsers.newegg import NeweggSearch
