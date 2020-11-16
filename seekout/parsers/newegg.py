@@ -35,6 +35,15 @@ def parse_newegg_product(soup):
 
 
 class NeweggSearch(ProductSearchPage):
+    base_url = "https://www.newegg.com"
+    categories = {"gpu": "100007709"}
+
+    @staticmethod
+    def search_url(self, text, category):
+        parsed_text = text.replace(" ", "+").lower()
+        category_id = self.categories.get(category)
+        return f"{self.base_url}/p/pl?d={parsed_text}&N={category_id}"
+
     def _parse_page(self):
         raw_products = self._get_products()
         products = list(map(parse_newegg_product, raw_products))

@@ -20,3 +20,10 @@ def sms_notification(
     server.login(smtp_user, smtp_password)
     server.sendmail(smtp_user, recipients, msg.as_string())
     server.quit()
+
+
+def create_msg_text(products):
+    message = "Products found:\n"
+    for product in products:
+        message += f"{product.name}\n{product.url}\n"
+    return message

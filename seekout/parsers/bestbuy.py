@@ -15,7 +15,7 @@ def parse_rating(text):
 
 def parse_bestbuy_product(soup):
     title = soup.find("div", {"class": "sku-title"}).text
-    url = soup.find("h4", {"class": "sku-header"}).find("a")["href"]
+    url_path = soup.find("h4", {"class": "sku-header"}).find("a")["href"]
     price = parse_price(soup.find("div", {"class": "priceView-customer-price"}).text)
     in_stock = (
         "sold out"
@@ -32,13 +32,22 @@ def parse_bestbuy_product(soup):
         price=price,
         rating=rating,
         manufacturer=manufacturer,
-        url=url,
+        url=f"{BASE_URL}{url_path}",
         in_stock=in_stock,
     )
     return product
 
 
 class BestBuySearch(ProductSearchPage):
+    base_url = BASE_URL
+    categories = {"cpu": "category_facet%3DCPUs%20%2F%20Processors~abcat0507010"}
+
+    @staticmethod
+    def search_url(self, text, category):
+        parsed_text = text.replace(" ", "%20").lower()
+        category_id = self.categories.get(category)
+        return f"{self.base_url}/site/searchpage.jsp?st={parsed_text}&qp={category_id}"
+
     def _parse_page(self):
         raw_products = self._get_products()
         products = list(map(parse_bestbuy_product, raw_products))
