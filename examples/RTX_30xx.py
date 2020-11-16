@@ -1,5 +1,7 @@
+import logging
 import os
-from time import sleep
+import sys
+from time import sleep, time
 from dotenv import load_dotenv
 
 from seekout.drivers.selenium import SeleniumDriver, DriverType
@@ -14,9 +16,16 @@ SMTP_USERNAME = os.getenv("SMTP_USERNAME")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
 RECIPIENTS_LIST = [os.getenv("SMS_RECIPIENT")]
 
-WEBDRIVER_PATH = "geckodriver"
-BINARY = "/usr/bin/firefox"
+WEBDRIVER_PATH = "/usr/local/bin/geckodriver"
+BINARY = "/usr/local/bin/firefox"
 DRIVER = SeleniumDriver(BINARY, WEBDRIVER_PATH, DriverType.FIREFOX)
+
+LOGGER = logging.getLogger()
+LOGGER.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+LOGGER.addHandler(handler)
 
 
 def main():
@@ -26,9 +35,10 @@ def main():
         ("Ryzen 9 5950x", "cpu"),
         ("Ryzen 9 5900x", "cpu"),
     ]
-    print(f"Starting search for: {search_terms}")
+    LOGGER.info(f"Starting search for: {search_terms}")
 
     while True:
+        LOGGER.debug(f"Doing another Search: {time()}")
         for term in search_terms:
             newegg_url = NeweggSearch.search_url(term[0], term[1])
             bestbuy_url = BestBuySearch.search_url(term[0], term[1])
@@ -42,7 +52,7 @@ def main():
                 if product.in_stock
             ]
             if in_stock_products:
-                print(in_stock_products)
+                LOGGER.info(in_stock_products)
                 message_text = sms.create_msg_text(in_stock_products)
                 sms.sms_notification(
                     message_text,

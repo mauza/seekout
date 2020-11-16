@@ -1,7 +1,10 @@
+import logging
 from enum import Enum
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.desired_capabilities import DesiredCapabilities
+
+LOGGER = logging.getLogger(__name__)
 
 
 class DriverType(str, Enum):
@@ -27,6 +30,9 @@ def firefox_driver(binary: str, webdriver_path: str) -> webdriver:
 
 class SeleniumDriver:
     def __init__(self, binary_path: str, webdriver_path: str, driver_type: DriverType):
+        LOGGER.debug(
+            f"Creating Selenium Driver: {binary_path},{webdriver_path},{driver_type}"
+        )
         self.reload_count = 0
         self.binary = binary_path
         self.webdriver_path = webdriver_path
@@ -34,8 +40,11 @@ class SeleniumDriver:
         self.driver = self.get_driver()
 
     def __del__(self):
-        self.driver.close()
-        self.driver.quit()
+        try:
+            self.driver.close()
+            self.driver.quit()
+        except AttributeError:
+            pass
 
     def get_driver(self):
         if self.driver_type == DriverType.FIREFOX:
@@ -47,6 +56,7 @@ class SeleniumDriver:
 
     def ensure_fresh_driver(self):
         if self.reload_count > 10:
+            LOGGER.debug("Getting new selenium driver, this one is old")
             self.driver.close()
             self.driver.quit()
             self.driver = self.get_driver()
@@ -54,6 +64,7 @@ class SeleniumDriver:
             self.reload_count += 1
 
     def get_html(self, url: str) -> str:
+        LOGGER.debug(f"Getting html at: {url}")
         self.ensure_fresh_driver()
         self.driver.get(url)
         return self.driver.page_source

@@ -1,5 +1,8 @@
+import logging
 import smtplib
 from email.mime.text import MIMEText
+
+LOGGER = logging.getLogger(__name__)
 
 
 def sms_notification(
@@ -10,6 +13,7 @@ def sms_notification(
     smtp_host: str,
     smtp_port: int,
 ) -> None:
+    LOGGER.debug(f"Sending message: {msg_text}\n To Recipients: {recipients}")
     msg = MIMEText(msg_text)
     msg["From"] = smtp_user
 
@@ -23,6 +27,7 @@ def sms_notification(
 
 
 def create_msg_text(products):
+    LOGGER.debug(f"Creating message with: {products}")
     message = "Products found:\n"
     for product in products:
         message += f"{product.name}\n{product.url}\n"

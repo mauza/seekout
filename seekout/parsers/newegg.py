@@ -1,9 +1,13 @@
+import logging
 from seekout.objects.product import Product
 from seekout.parsers.generic import ProductSearchPage
 from seekout.parsers.utils import parse_price
 
+LOGGER = logging.getLogger(__name__)
+
 
 def parse_newegg_product(soup):
+    LOGGER.debug(soup)
     title = soup.find("a", {"class": "item-title"}).text
     url = soup.find("a", {"class": "item-title"})["href"]
     price = parse_price(soup.find("li", {"class": "price-current"}).text)
@@ -39,10 +43,11 @@ class NeweggSearch(ProductSearchPage):
     categories = {"gpu": "100007709"}
 
     @staticmethod
-    def search_url(self, text, category):
+    def search_url(text, category):
+        LOGGER.debug(f"'{text}' : {category}")
         parsed_text = text.replace(" ", "+").lower()
-        category_id = self.categories.get(category)
-        return f"{self.base_url}/p/pl?d={parsed_text}&N={category_id}"
+        category_id = NeweggSearch.categories.get(category)
+        return f"{NeweggSearch.base_url}/p/pl?d={parsed_text}&N={category_id}"
 
     def _parse_page(self):
         raw_products = self._get_products()
