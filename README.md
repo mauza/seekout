@@ -1,58 +1,7 @@
-# Seekout [![PyPI](https://img.shields.io/pypi/v/seekout.svg)](https://pypi.org/project/seekout/) [![License](https://img.shields.io/pypi/l/seekout)](https://opensource.org/licenses/MIT) [![Python Version](https://img.shields.io/pypi/pyversions/seekout)](https://pypi.org/project/seekout/) [![Codecov](https://codecov.io/gh/mauza/seekout/branch/master/graph/badge.svg)](https://codecov.io/gh/mauza/seekout/) [![pre-commmit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit&logoColor=white)](https://github.com/pre-commit/pre-commit) [![Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+# Seekout 
 
-This project seeks to make it easy to parse html from certain sellers websites so that you can find an item
-you are looking for the for price you are looking to pay.
-
-
-Features
---------
-[ Work in progress ]
-* Get raw html using Selenium
-* Parsers to collect information about products including prices, if they are in stock, etc.
-  - Newegg
-  - Bestbuy
-  - Amazon
-
-
-Requirements
-------------
-
-* An environment with a browser (preferably one with headless capabilities)
-* a python environment
-
-
-Installation
-------------
-
-You can install seekout via pip:
-
-```
-$ pip install seekout
-```
-
-
-Usage
------
-[ Work in progress ]
-
-```
-from seekout.drivers.selenium import SeleniumDriver, DriverType
-from seekout.parsers.newegg import NeweggSearch
-
-webdriver_path = "geckodriver"
-binary = "/usr/bin/firefox"
-
-driver = SeleniumDriver(binary, webdriver_path, DriverType.FIREFOX)
-
-
-url = "https://www.newegg.com/p/pl?N=100007709%20601357282"
-html = driver.get_html(url)
-newegg_search = NeweggSearch(html)
-
-for product in newegg_search.products:
-    print(p.__dict__)
-```
-
+We want to make looking for stuff easier. Flip the script as you will. Instead of putting in the effor to find what you are looking for, 
+put seekers to work and be alerted when what you want is available. 
 
 Contributing
 ------------
