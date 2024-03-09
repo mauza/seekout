@@ -2,8 +2,6 @@ module github.com/mauza/seekout/seekers/utahrealestate
 
 go 1.22.0
 
-require cloud.google.com/go/datastore v1.15.0
-
 require (
 	cloud.google.com/go v0.110.7 // indirect
 	cloud.google.com/go/compute v1.23.0 // indirect

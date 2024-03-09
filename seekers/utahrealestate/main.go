@@ -6,27 +6,17 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
-	"internal"
-
-	"cloud.google.com/go/datastore"
+	"github.com/mauza/seekout/seekers/utahrealestate/internal"
 )
 
 var (
-	PublishTopic  = os.Getenv("PUBLISH_TOPIC")
-	ProjectID     = os.Getenv("PROJECT_ID")
-	BaseURL       = "https://v12services.utahrealestate.com/property-search/property-search?orderby[0]=default"
-	DatastoreKind = "LastProperty"
+	// PublishTopic = os.Getenv("PUBLISH_TOPIC")
+	// ProjectID    = os.Getenv("PROJECT_ID")
+	BaseURL = "https://v12services.utahrealestate.com/property-search/property-search?orderby[0]=default"
 )
 
 func pollProperties(ctx context.Context) error {
-	client, err := datastore.NewClient(ctx, ProjectID)
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-
 	response, err := http.Get(BaseURL)
 	if err != nil {
 		return err
