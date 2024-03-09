@@ -1,12 +1,10 @@
 package internal
 
-import (
-	"github.com/guergu/null/v5"
-)
+import github.com/guregu/null/v5
 
 type Property struct {
 	ListNo             int         `json:"listno"`
-	Dom                null.String `json:"dom"`
+	Dom                null.String      `json:"dom"`
 	Image              string      `json:"image"`
 	TimeClause         string      `json:"timeclause"`
 	ShortSale          string      `json:"shortsale"`
