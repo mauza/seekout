@@ -1,30 +1,62 @@
-# Seekout 
+# seekout
 
-We want to make looking for stuff easier. Flip the script as you will. Instead of putting in the effor to find what you are looking for, 
-put seekers to work and be alerted when what you want is available. 
+Listing alerts: poll sources (RSS feeds, later scrapers), match new listings
+against per-user seekers, fire alerters (ntfy, webhook/Slack).
 
-Contributing
-------------
+Single Go binary with PocketBase embedded: DB, auth, REST + realtime API,
+admin UI at `/_/`, and the webapp served from the binary.
 
-I would love to get help building out the parsers for certain websites.
-I'm working on a few I care about currently, but I'm sure there are more
-features and sites that others would love to have included as well.
+## Source layout
 
-Remember:
- - Be nice
- - Pull Requests WELCOME!
- - Submit an issue
+- `main.go` — bootstrap, cron registration, custom routes (`POST
+  /api/seekout/sources/{id}/poll`, `POST /api/seekout/alerters/{id}/test`),
+  embedded static UI
+- `migrations/` — PocketBase Go migrations (collections + rules)
+- `internal/listing` — normalized listing shape
+- `internal/sources` — `Source` interface + registry; add a site = one file +
+  `Register("type", impl)`
+- `internal/match` — seeker condition evaluation (`= != > < >= <= in
+  contains`, dot-path into `attrs` JSON)
+- `internal/alerters` — `Alerter` interface + registry (ntfy, webhook)
+- `internal/pipeline` — poll → dedup (`(source, external_id)` unique) →
+  match → alert fan-out
+- `web/` — framework-free UI (PocketBase JS SDK, realtime alerts feed)
 
+## Run locally
 
-License
--------
+```sh
+go run . serve --http=127.0.0.1:8090
+# first time only:
+go run . superuser upsert you@example.com <password>
+```
 
-Distributed under the terms of the [MIT license](LICENSE.md), <br>
-*seekout* is free and open source software.
+Then create a login user at http://127.0.0.1:8090/_/ (Users collection) and
+sign in at http://127.0.0.1:8090/.
 
+## Deploy
 
-Issues
-------
+Build and push to harbor, then let ArgoCD sync `apps/seekout`:
 
-If you encounter any problems,
-please `file an issue` along with a detailed description.
+```sh
+docker buildx build --platform linux/amd64 -t docker.mau.guru/library/seekout:latest --push .
+```
+
+Create the superuser secret (sealed-secret or plain; sealed example):
+
+```sh
+kubectl create secret generic seekout-superuser -n seekout \
+  --from-literal=email=you@example.com \
+  --from-literal=password='<password>' \
+  --dry-run=client -o yaml | kubeseal -o yaml > apps/seekout/sealed-secret.yaml
+```
+
+App runs at https://seekout.mau.guru. Sources poll on their configured
+interval via the in-process cron; "poll now" in the UI triggers an immediate
+poll.
+
+## Notes
+
+- realtor.com's old `mapi-ng` API is decommissioned (NXDOMAIN); Craigslist
+  blocks some IPs even for RSS. Both are source-config concerns, not code —
+  `last_error` on the source record surfaces failures in the UI.
+- replicas must stay 1 (embedded SQLite).

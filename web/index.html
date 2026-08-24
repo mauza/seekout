@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seekout</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>seekout</h1>
+  <nav id="nav" hidden>
+    <button data-tab="alerts" class="active">Alerts</button>
+    <button data-tab="seekers">Seekers</button>
+    <button data-tab="sources">Sources</button>
+    <button data-tab="alerters">Alerters</button>
+    <button id="logout" class="link">log out</button>
+  </nav>
+</header>
+
+<main>
+  <section id="login" hidden>
+    <form id="login-form" class="card">
+      <h2>Sign in</h2>
+      <input type="email" id="login-email" placeholder="email" required autocomplete="username">
+      <input type="password" id="login-password" placeholder="password" required autocomplete="current-password">
+      <button type="submit">Sign in</button>
+      <p class="error" id="login-error"></p>
+    </form>
+  </section>
+
+  <section id="tab-alerts">
+    <div id="alerts-list"></div>
+  </section>
+
+  <section id="tab-seekers" hidden>
+    <button id="new-seeker">+ new seeker</button>
+    <div id="seekers-list"></div>
+    <form id="seeker-form" class="card" hidden>
+      <h2 id="seeker-form-title">New seeker</h2>
+      <input type="hidden" id="seeker-id">
+      <label>Name <input id="seeker-name" required></label>
+      <label>Kind
+        <select id="seeker-kind">
+          <option value="any">any</option>
+          <option value="home">home</option>
+          <option value="car">car</option>
+          <option value="classified">classified</option>
+          <option value="other">other</option>
+        </select>
+      </label>
+      <fieldset>
+        <legend>Sources (none checked = all)</legend>
+        <div id="seeker-sources"></div>
+      </fieldset>
+      <fieldset>
+        <legend>Conditions (all must match)</legend>
+        <div id="seeker-conditions"></div>
+        <button type="button" id="add-condition">+ condition</button>
+      </fieldset>
+      <fieldset>
+        <legend>Alerters</legend>
+        <div id="seeker-alerters"></div>
+      </fieldset>
+      <label><input type="checkbox" id="seeker-enabled" checked> enabled</label>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="button" id="seeker-cancel" class="link">cancel</button>
+      </div>
+      <p class="error" id="seeker-error"></p>
+    </form>
+  </section>
+
+  <section id="tab-sources" hidden>
+    <button id="new-source">+ new source</button>
+    <div id="sources-list"></div>
+    <form id="source-form" class="card" hidden>
+      <h2>New source</h2>
+      <label>Name <input id="source-name" required></label>
+      <label>Kind
+        <select id="source-kind">
+          <option value="classified">classified</option>
+          <option value="home">home</option>
+          <option value="car">car</option>
+          <option value="other">other</option>
+        </select>
+      </label>
+      <label>Feed URL <input id="source-url" type="url" required placeholder="https://saltlakecity.craigslist.org/search/cta?format=rss&query=miata"></label>
+      <label>Poll interval (minutes) <input id="source-interval" type="number" min="1" value="30" required></label>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="button" id="source-cancel" class="link">cancel</button>
+      </div>
+      <p class="error" id="source-error"></p>
+    </form>
+  </section>
+
+  <section id="tab-alerters" hidden>
+    <button id="new-alerter">+ new alerter</button>
+    <div id="alerters-list"></div>
+    <form id="alerter-form" class="card" hidden>
+      <h2 id="alerter-form-title">New alerter</h2>
+      <input type="hidden" id="alerter-id">
+      <label>Name <input id="alerter-name" required></label>
+      <label>Type
+        <select id="alerter-type">
+          <option value="ntfy">ntfy</option>
+          <option value="webhook">webhook (Slack-compatible)</option>
+        </select>
+      </label>
+      <div id="alerter-ntfy-fields">
+        <label>Server URL <input id="alerter-ntfy-url" type="url" placeholder="https://ntfy.sh"></label>
+        <label>Topic <input id="alerter-ntfy-topic" placeholder="my-secret-topic"></label>
+        <label>Token (optional) <input id="alerter-ntfy-token"></label>
+        <label>Priority (optional) <input id="alerter-ntfy-priority" placeholder="3"></label>
+        <label>Tags (optional) <input id="alerter-ntfy-tags" placeholder="house,rotating_light"></label>
+      </div>
+      <div id="alerter-webhook-fields" hidden>
+        <label>Webhook URL <input id="alerter-webhook-url" type="url" placeholder="https://hooks.slack.com/services/..."></label>
+      </div>
+      <label><input type="checkbox" id="alerter-enabled" checked> enabled</label>
+      <div class="row">
+        <button type="submit">Save</button>
+        <button type="button" id="alerter-cancel" class="link">cancel</button>
+      </div>
+      <p class="error" id="alerter-error"></p>
+    </form>
+  </section>
+</main>
+
+<script src="/vendor/pocketbase.umd.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
