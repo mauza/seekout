@@ -247,7 +247,9 @@ async function refreshSources() {
       status.textContent = "polling…";
       try {
         const res = await pb.send(`/api/seekout/sources/${s.id}/poll`, { method: "POST" });
-        status.textContent = `${res.fetched} fetched, ${res.new} new, ${res.matched} matched`;
+        status.textContent = res.seeded
+          ? `${res.fetched} fetched, ${res.new} stored — first poll seeds without alerting`
+          : `${res.fetched} fetched, ${res.new} new, ${res.matched} matched`;
       } catch (err) {
         status.textContent = err.message;
       }

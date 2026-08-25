@@ -25,6 +25,7 @@ type Stats struct {
 	Fetched int    `json:"fetched"`
 	New     int    `json:"new"`
 	Matched int    `json:"matched"`
+	Seeded  bool   `json:"seeded"`
 }
 
 // PollDue is the cron entrypoint: poll every enabled source whose
@@ -51,7 +52,8 @@ func PollDue(ctx context.Context, app core.App) {
 			app.Logger().Error("poll failed", "source", src.GetString("name"), "error", err)
 		} else {
 			app.Logger().Info("poll complete",
-				"source", stats.Source, "fetched", stats.Fetched, "new", stats.New, "matched", stats.Matched)
+				"source", stats.Source, "fetched", stats.Fetched, "new", stats.New,
+				"matched", stats.Matched, "seeded", stats.Seeded)
 		}
 	}
 }
@@ -59,6 +61,10 @@ func PollDue(ctx context.Context, app core.App) {
 // PollSource fetches one source, stores new listings, and fires alerts for
 // every matching seeker. It always records last_polled/last_error on the
 // source so failures don't retry on every cron tick.
+//
+// The first successful poll of a source only ingests: a feed's existing
+// backlog is not news, and alerting on it would fire dozens of
+// notifications the moment a source is added.
 func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, error) {
 	stats := Stats{Source: src.GetString("name")}
 
@@ -73,9 +79,14 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 	}
 	stats.Fetched = len(listings)
 
-	seekers, err := app.FindRecordsByFilter("seekers", "enabled = true", "", 0, 0)
-	if err != nil {
-		return stats, finishSource(app, src, fmt.Errorf("list seekers: %w", err))
+	seeding := !src.GetBool("seeded")
+
+	var seekers []*core.Record
+	if !seeding {
+		seekers, err = app.FindRecordsByFilter("seekers", "enabled = true", "", 0, 0)
+		if err != nil {
+			return stats, finishSource(app, src, fmt.Errorf("list seekers: %w", err))
+		}
 	}
 
 	for _, l := range listings {
@@ -108,6 +119,10 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 		}
 	}
 
+	stats.Seeded = seeding
+	if seeding {
+		src.Set("seeded", true)
+	}
 	return stats, finishSource(app, src, nil)
 }
 

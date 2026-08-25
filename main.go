@@ -37,14 +37,18 @@ func main() {
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
-		// Synchronous on-demand poll for one source (used by the web UI's
-		// "poll now" button and for debugging).
+		// On-demand poll for one source (the web UI's "poll now" button).
+		// The pipeline runs on a context detached from the request: a client
+		// that disconnects mid-poll must not cancel alert delivery and leave
+		// listings stored with their notifications half-sent.
 		se.Router.POST("/api/seekout/sources/{id}/poll", func(e *core.RequestEvent) error {
 			src, err := app.FindRecordById("sources", e.Request.PathValue("id"))
 			if err != nil {
 				return e.NotFoundError("source not found", err)
 			}
-			stats, err := pipeline.PollSource(e.Request.Context(), app, src)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(e.Request.Context()), 10*time.Minute)
+			defer cancel()
+			stats, err := pipeline.PollSource(ctx, app, src)
 			if err != nil {
 				return e.BadRequestError("poll failed", err)
 			}
@@ -63,7 +67,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-		se.Router.GET("/{path...}", apis.Static(pub, true))
+		// No index fallback: the UI has no client-side routes, and falling
+		// back would answer unknown /api/... paths with the SPA instead of 404.
+		se.Router.GET("/{path...}", apis.Static(pub, false))
 
 		return se.Next()
 	})
