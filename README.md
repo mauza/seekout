@@ -38,7 +38,8 @@ sign in at http://127.0.0.1:8090/.
 Build and push to harbor, then let ArgoCD sync `apps/seekout`:
 
 ```sh
-docker buildx build --platform linux/amd64 -t docker.mau.guru/library/seekout:latest --push .
+docker buildx build --builder multiarch --platform linux/amd64,linux/arm64 \
+  -t docker.mau.guru/library/seekout:0.1.1 --push .
 ```
 
 Create the superuser secret (sealed-secret or plain; sealed example):
@@ -60,3 +61,7 @@ poll.
   blocks some IPs even for RSS. Both are source-config concerns, not code —
   `last_error` on the source record surfaces failures in the UI.
 - replicas must stay 1 (embedded SQLite).
+- the cluster has arm64 workers, so images must be multi-arch — an
+  amd64-only image crash-loops with `exec format error`.
+- the webapp login lives in the `users` collection; superusers can only use
+  the dashboard at `/_/`. Both accounts are needed.
