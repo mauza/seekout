@@ -33,6 +33,28 @@ go run . superuser upsert you@example.com <password>
 Then create a login user at http://127.0.0.1:8090/_/ (Users collection) and
 sign in at http://127.0.0.1:8090/.
 
+## Test
+
+`scripts/prod-test.sh` is an end-to-end pass against a running instance:
+transport and TLS, auth and anonymous access, ntfy/webhook delivery (verified
+by reading the messages back off the ntfy server), the condition-operator
+matrix, source seeding, dedup, `last_error` handling, per-user isolation,
+cron, pod-restart persistence and cascade deletes.
+
+```sh
+scripts/prod-test.sh                    # https://seekout.mau.guru, cluster checks on
+SEEKOUT_URL=http://127.0.0.1:8090 \
+  SEEKOUT_EMAIL=you@example.test \
+  SEEKOUT_PASSWORD=... \
+  SEEKOUT_SKIP_CLUSTER=1 scripts/prod-test.sh
+```
+
+Credentials default to the first bare email line in `~/.secrets/seekout.txt`
+and the line after it; the account must exist in both the `users` collection
+and `_superusers`. It is not read-only: it creates and removes `test-*`
+records plus a second user, and with cluster access it deletes the pod once to
+prove the data survives (`SEEKOUT_SKIP_RESTART=1` to skip).
+
 ## Deploy
 
 Build and push to harbor, then let ArgoCD sync `apps/seekout`:
