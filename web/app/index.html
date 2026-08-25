@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>seekout</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/app/app.css">
+</head>
+<body class="app-body">
+
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="2"/>
+        <path d="m15.6 15.6 4.4 4.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="10.5" cy="10.5" r="2" fill="currentColor"/>
+      </svg>
+      <span>seekout</span>
+    </a>
+
+    <nav class="nav" id="nav">
+      <a href="#/alerts" data-route="alerts">
+        <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 5-2 6-2 6h16s-2-1-2-6a6 6 0 0 0-6-6Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+        <span>Alerts</span>
+        <span class="nav-count" id="nav-alerts-count" hidden></span>
+      </a>
+      <a href="#/seekers" data-route="seekers">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="m15.5 15.5 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Seekers</span>
+      </a>
+      <a href="#/sources" data-route="sources">
+        <svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 5a15 15 0 0 1 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><circle cx="5" cy="19" r="1.6" fill="currentColor"/></svg>
+        <span>Sources</span>
+      </a>
+      <a href="#/listings" data-route="listings">
+        <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Listings</span>
+      </a>
+      <a href="#/alerters" data-route="alerters">
+        <svg viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="17.5" r="2.2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
+        <span>Alerters</span>
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="account">
+        <div class="avatar" id="account-avatar">?</div>
+        <div class="account-meta">
+          <span class="truncate" id="account-email">…</span>
+          <span class="dim small">signed in</span>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-sm" id="signout">Sign out</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="btn btn-icon btn-ghost menu-toggle" id="menu-toggle" aria-label="Menu">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <div class="page-head">
+        <h1 id="page-title">Alerts</h1>
+        <p class="muted small" id="page-sub"></p>
+      </div>
+      <div class="topbar-actions row" id="page-actions"></div>
+    </header>
+
+    <main class="view" id="view"></main>
+  </div>
+</div>
+
+<div id="modal-host"></div>
+<div class="toasts" id="toasts"></div>
+
+<script src="/vendor/pocketbase.umd.js"></script>
+<script src="/app/app.js"></script>
+</body>
+</html>

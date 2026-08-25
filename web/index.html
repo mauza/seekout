@@ -3,132 +3,181 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>seekout</title>
-<link rel="stylesheet" href="/style.css">
+<title>seekout — know the moment it's listed</title>
+<meta name="description" content="Seekout watches the listing sites you care about and alerts you the moment something matches. Homes, cars, classifieds — anything with a feed.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/landing.css">
 </head>
 <body>
-<header>
-  <h1>seekout</h1>
-  <nav id="nav" hidden>
-    <button data-tab="alerts" class="active">Alerts</button>
-    <button data-tab="seekers">Seekers</button>
-    <button data-tab="sources">Sources</button>
-    <button data-tab="alerters">Alerters</button>
-    <button id="logout" class="link">log out</button>
-  </nav>
+
+<header class="site-header">
+  <div class="wrap row-between">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" stroke-width="2"/>
+        <path d="m15.6 15.6 4.4 4.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="10.5" cy="10.5" r="2" fill="currentColor"/>
+      </svg>
+      <span>seekout</span>
+    </a>
+    <nav class="row">
+      <a class="btn btn-ghost" href="#how">How it works</a>
+      <button class="btn btn-ghost" data-auth-open="signin">Sign in</button>
+      <button class="btn btn-primary" data-auth-open="signup">Get started</button>
+    </nav>
+  </div>
 </header>
 
 <main>
-  <section id="login" hidden>
-    <form id="login-form" class="card">
-      <h2>Sign in</h2>
-      <input type="email" id="login-email" placeholder="email" required autocomplete="username">
-      <input type="password" id="login-password" placeholder="password" required autocomplete="current-password">
-      <button type="submit">Sign in</button>
-      <p class="error" id="login-error"></p>
-    </form>
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="wrap hero-inner">
+      <div class="hero-copy">
+        <span class="badge badge-accent badge-dot">self-hosted listing alerts</span>
+        <h1>Know the moment<br>it&rsquo;s <span class="grad">listed</span>.</h1>
+        <p class="lede">
+          Seekout polls the sites you care about, matches every new listing against
+          rules you define, and pings you within the minute. Homes, cars,
+          classifieds &mdash; anything with a feed.
+        </p>
+        <div class="hero-cta row">
+          <button class="btn btn-primary btn-lg" data-auth-open="signup">Create an account</button>
+          <a class="btn btn-lg" href="#how">See how it works</a>
+        </div>
+        <ul class="hero-facts">
+          <li><svg viewBox="0 0 24 24"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> One binary, your server</li>
+          <li><svg viewBox="0 0 24 24"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> ntfy &amp; webhook alerts</li>
+          <li><svg viewBox="0 0 24 24"><path d="m5 13 4 4L19 7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> No listing left twice</li>
+        </ul>
+      </div>
+
+      <div class="hero-preview" aria-hidden="true">
+        <div class="preview-card">
+          <div class="preview-head">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="preview-title">Alerts</span>
+          </div>
+          <div class="preview-row">
+            <div class="preview-main">
+              <strong>3 bd bungalow &mdash; Sugar House</strong>
+              <span class="dim small">under-450k · 2 minutes ago</span>
+            </div>
+            <span class="badge badge-ok">ntfy</span>
+          </div>
+          <div class="preview-row">
+            <div class="preview-main">
+              <strong>1994 Miata, 88k miles</strong>
+              <span class="dim small">cheap-miata · 14 minutes ago</span>
+            </div>
+            <span class="badge badge-ok">ntfy</span>
+          </div>
+          <div class="preview-row muted-row">
+            <div class="preview-main">
+              <strong>Standing desk, walnut</strong>
+              <span class="dim small">desk-hunt · 1 hour ago</span>
+            </div>
+            <span class="badge">webhook</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <section id="tab-alerts">
-    <div id="alerts-list"></div>
+  <section class="features wrap">
+    <article class="card card-hover">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <h3>Pluggable sources</h3>
+      <p class="muted small">Point it at any RSS or Atom feed &mdash; Craigslist searches, KSL, marketplace feeds. Each source polls on its own schedule.</p>
+    </article>
+    <article class="card card-hover">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M6 4v7a6 6 0 0 0 12 0V4" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="12" cy="19" r="2" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+      <h3>Precise seekers</h3>
+      <p class="muted small">Compose conditions over price, title, or any field the source returns. Every condition has to hold before you hear about it.</p>
+    </article>
+    <article class="card card-hover">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 5-2 6-2 6h16s-2-1-2-6a6 6 0 0 0-6-6Z" stroke="currentColor" stroke-width="2" fill="none" stroke-linejoin="round"/><path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+      <h3>Alerts that arrive</h3>
+      <p class="muted small">ntfy for push to your phone, webhooks for Slack or anything else. Delivery is recorded per alert, successes and failures alike.</p>
+    </article>
+    <article class="card card-hover">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M4 7c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3Z" stroke="currentColor" stroke-width="2" fill="none"/><path d="M4 7v10c0 1.7 3.6 3 8 3s8-1.3 8-3V7" stroke="currentColor" stroke-width="2" fill="none"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" stroke="currentColor" stroke-width="2" fill="none"/></svg></div>
+      <h3>Nothing twice</h3>
+      <p class="muted small">Listings are de-duplicated per source, and a brand-new source seeds quietly instead of dumping its whole backlog on you.</p>
+    </article>
   </section>
 
-  <section id="tab-seekers" hidden>
-    <button id="new-seeker">+ new seeker</button>
-    <div id="seekers-list"></div>
-    <form id="seeker-form" class="card" hidden>
-      <h2 id="seeker-form-title">New seeker</h2>
-      <input type="hidden" id="seeker-id">
-      <label>Name <input id="seeker-name" required></label>
-      <label>Kind
-        <select id="seeker-kind">
-          <option value="any">any</option>
-          <option value="home">home</option>
-          <option value="car">car</option>
-          <option value="classified">classified</option>
-          <option value="other">other</option>
-        </select>
-      </label>
-      <fieldset>
-        <legend>Sources (none checked = all)</legend>
-        <div id="seeker-sources"></div>
-      </fieldset>
-      <fieldset>
-        <legend>Conditions (all must match)</legend>
-        <div id="seeker-conditions"></div>
-        <button type="button" id="add-condition">+ condition</button>
-      </fieldset>
-      <fieldset>
-        <legend>Alerters</legend>
-        <div id="seeker-alerters"></div>
-      </fieldset>
-      <label><input type="checkbox" id="seeker-enabled" checked> enabled</label>
-      <div class="row">
-        <button type="submit">Save</button>
-        <button type="button" id="seeker-cancel" class="link">cancel</button>
-      </div>
-      <p class="error" id="seeker-error"></p>
-    </form>
-  </section>
-
-  <section id="tab-sources" hidden>
-    <button id="new-source">+ new source</button>
-    <div id="sources-list"></div>
-    <form id="source-form" class="card" hidden>
-      <h2>New source</h2>
-      <label>Name <input id="source-name" required></label>
-      <label>Kind
-        <select id="source-kind">
-          <option value="classified">classified</option>
-          <option value="home">home</option>
-          <option value="car">car</option>
-          <option value="other">other</option>
-        </select>
-      </label>
-      <label>Feed URL <input id="source-url" type="url" required placeholder="https://saltlakecity.craigslist.org/search/cta?format=rss&query=miata"></label>
-      <label>Poll interval (minutes) <input id="source-interval" type="number" min="1" value="30" required></label>
-      <div class="row">
-        <button type="submit">Save</button>
-        <button type="button" id="source-cancel" class="link">cancel</button>
-      </div>
-      <p class="error" id="source-error"></p>
-    </form>
-  </section>
-
-  <section id="tab-alerters" hidden>
-    <button id="new-alerter">+ new alerter</button>
-    <div id="alerters-list"></div>
-    <form id="alerter-form" class="card" hidden>
-      <h2 id="alerter-form-title">New alerter</h2>
-      <input type="hidden" id="alerter-id">
-      <label>Name <input id="alerter-name" required></label>
-      <label>Type
-        <select id="alerter-type">
-          <option value="ntfy">ntfy</option>
-          <option value="webhook">webhook (Slack-compatible)</option>
-        </select>
-      </label>
-      <div id="alerter-ntfy-fields">
-        <label>Server URL <input id="alerter-ntfy-url" type="url" placeholder="https://ntfy.sh"></label>
-        <label>Topic <input id="alerter-ntfy-topic" placeholder="my-secret-topic"></label>
-        <label>Token (optional) <input id="alerter-ntfy-token"></label>
-        <label>Priority (optional) <input id="alerter-ntfy-priority" placeholder="3"></label>
-        <label>Tags (optional) <input id="alerter-ntfy-tags" placeholder="house,rotating_light"></label>
-      </div>
-      <div id="alerter-webhook-fields" hidden>
-        <label>Webhook URL <input id="alerter-webhook-url" type="url" placeholder="https://hooks.slack.com/services/..."></label>
-      </div>
-      <label><input type="checkbox" id="alerter-enabled" checked> enabled</label>
-      <div class="row">
-        <button type="submit">Save</button>
-        <button type="button" id="alerter-cancel" class="link">cancel</button>
-      </div>
-      <p class="error" id="alerter-error"></p>
-    </form>
+  <section class="how wrap" id="how">
+    <header class="how-head">
+      <h2>Three steps and you&rsquo;re watching</h2>
+      <p class="muted">No pipelines to wire up, no cron to babysit.</p>
+    </header>
+    <ol class="steps">
+      <li class="card">
+        <span class="step-n">1</span>
+        <h3>Add a source</h3>
+        <p class="muted small">Paste a feed URL, pick what kind of thing it lists, choose how often to poll.</p>
+      </li>
+      <li class="card">
+        <span class="step-n">2</span>
+        <h3>Describe what you want</h3>
+        <p class="muted small">A seeker is a name plus conditions: <span class="mono">price &lt; 15000</span>, <span class="mono">title contains miata</span>.</p>
+      </li>
+      <li class="card">
+        <span class="step-n">3</span>
+        <h3>Get pinged</h3>
+        <p class="muted small">New matches hit your phone through ntfy, and land in your feed live.</p>
+      </li>
+    </ol>
+    <div class="how-cta">
+      <button class="btn btn-primary btn-lg" data-auth-open="signup">Start watching</button>
+    </div>
   </section>
 </main>
 
+<footer class="site-footer">
+  <div class="wrap row-between">
+    <span class="dim small">seekout &mdash; a single Go binary with PocketBase inside.</span>
+    <a class="dim small" href="/_/">Admin dashboard</a>
+  </div>
+</footer>
+
+<!-- auth modal -->
+<div class="modal-backdrop" id="auth" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+    <header>
+      <h2 id="auth-title">Create your account</h2>
+      <button class="btn btn-icon btn-ghost" data-auth-close aria-label="Close">
+        <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <form id="auth-form">
+      <div class="body">
+        <div class="field">
+          <label for="auth-email">Email</label>
+          <input id="auth-email" type="email" autocomplete="username" required placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="auth-password">Password</label>
+          <input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="at least 8 characters">
+        </div>
+        <div class="field" id="auth-confirm-field">
+          <label for="auth-confirm">Confirm password</label>
+          <input id="auth-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="repeat it">
+        </div>
+        <p class="err-text" id="auth-error"></p>
+      </div>
+      <footer>
+        <button type="button" class="btn btn-ghost" id="auth-toggle">Have an account? Sign in</button>
+        <button type="submit" class="btn btn-primary" id="auth-submit">Create account</button>
+      </footer>
+    </form>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
 <script src="/vendor/pocketbase.umd.js"></script>
-<script src="/app.js"></script>
+<script src="/landing.js"></script>
 </body>
 </html>
