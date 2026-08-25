@@ -20,7 +20,11 @@ admin UI at `/_/`, and the webapp served from the binary.
 - `internal/alerters` — `Alerter` interface + registry (ntfy, webhook)
 - `internal/pipeline` — poll → dedup (`(source, external_id)` unique) →
   match → alert fan-out
-- `web/` — framework-free UI (PocketBase JS SDK, realtime alerts feed)
+- `web/` — framework-free UI, no build step: `index.html` + `landing.*` are
+  the public landing page and signup, `web/app/` is the signed-in app
+  (hash routes for Alerts, Seekers, Sources, Listings, Alerters),
+  `styles.css` is the shared design system, `vendor/` holds the PocketBase
+  JS SDK
 
 ## Run locally
 
@@ -30,8 +34,9 @@ go run . serve --http=127.0.0.1:8090
 go run . superuser upsert you@example.com <password>
 ```
 
-Then create a login user at http://127.0.0.1:8090/_/ (Users collection) and
-sign in at http://127.0.0.1:8090/.
+Sign up at http://127.0.0.1:8090/ — the landing page creates the account and
+drops you into the app. `superuser upsert` is only needed for the PocketBase
+dashboard at `/_/`.
 
 ## Test
 

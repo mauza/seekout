@@ -122,7 +122,7 @@
 
 @media (max-width: 860px) {
   .hero-inner { grid-template-columns: 1fr; }
-  .hero-preview { order: -1; }
+  .hero-preview { order: 0; }
   .preview-card { transform: none; }
   .site-header nav a[href="#how"] { display: none; }
 }

@@ -108,9 +108,9 @@ $("auth-form").addEventListener("submit", async (e) => {
     pb.authStore.clear();
     return;
   }
+  // one "Open app" is enough — drop the secondary sign-in affordance
   for (const btn of document.querySelectorAll('[data-auth-open="signin"]')) {
-    btn.textContent = "Open app";
-    btn.onclick = () => (location.href = "/app/");
+    btn.hidden = true;
   }
   for (const btn of document.querySelectorAll('[data-auth-open="signup"]')) {
     btn.textContent = "Open app";
