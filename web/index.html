@@ -153,11 +153,11 @@
     </header>
     <form id="auth-form">
       <div class="body">
-        <div class="field">
+        <div class="field" id="auth-email-field">
           <label for="auth-email">Email</label>
           <input id="auth-email" type="email" autocomplete="username" required placeholder="you@example.com">
         </div>
-        <div class="field">
+        <div class="field" id="auth-password-field">
           <label for="auth-password">Password</label>
           <input id="auth-password" type="password" autocomplete="current-password" required minlength="8" placeholder="at least 8 characters">
         </div>
@@ -166,6 +166,14 @@
           <input id="auth-confirm" type="password" autocomplete="new-password" minlength="8" placeholder="repeat it">
         </div>
         <p class="err-text" id="auth-error"></p>
+        <div class="auth-sent" id="auth-sent" hidden>
+          <div class="auth-sent-icon">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+          </div>
+          <h3>Check your inbox</h3>
+          <p class="muted"><span id="auth-sent-lead">We sent a verification link to</span> <strong id="auth-sent-email"></strong>. Click it and you can sign in.</p>
+          <button type="button" class="btn btn-ghost btn-sm" id="auth-resend">Resend the link</button>
+        </div>
       </div>
       <footer>
         <button type="button" class="btn btn-ghost" id="auth-toggle">Have an account? Sign in</button>

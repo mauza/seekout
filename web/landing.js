@@ -31,6 +31,33 @@ function setMode(next) {
   $("auth-confirm").required = signup;
   $("auth-password").autocomplete = signup ? "new-password" : "current-password";
   $("auth-error").textContent = "";
+  showForm();
+}
+
+// Swaps the modal between the credential form and the "check your inbox"
+// panel. `justSent` distinguishes signup (a link is already on its way) from
+// a sign-in blocked by verification (the link was sent whenever they signed
+// up, possibly days ago).
+function showSent(email, justSent) {
+  $("auth-sent-email").textContent = email;
+  $("auth-sent-lead").textContent = justSent
+    ? "We sent a verification link to"
+    : "This address is not verified yet. Check the link we emailed";
+  $("auth-sent").hidden = false;
+  $("auth-error").textContent = "";
+  for (const id of ["auth-email-field", "auth-password-field", "auth-confirm-field"]) {
+    $(id).hidden = true;
+  }
+  $("auth-submit").hidden = true;
+  $("auth-toggle").hidden = true;
+}
+
+function showForm() {
+  $("auth-sent").hidden = true;
+  $("auth-email-field").hidden = false;
+  $("auth-password-field").hidden = false;
+  $("auth-submit").hidden = false;
+  $("auth-toggle").hidden = false;
 }
 
 function openAuth(next) {
@@ -72,6 +99,20 @@ function authError(err) {
   return err?.message || "Something went wrong.";
 }
 
+let lastEmail = "";
+
+$("auth-resend").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    await pb.collection("users").requestVerification(lastEmail);
+    toast("Sent another link.", "ok");
+  } catch (err) {
+    toast(authError(err), "err");
+  }
+  setTimeout(() => (btn.disabled = false), 3000);
+});
+
 $("auth-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = $("auth-email").value.trim();
@@ -79,6 +120,7 @@ $("auth-form").addEventListener("submit", async (e) => {
   const submit = $("auth-submit");
   $("auth-error").textContent = "";
   submit.disabled = true;
+  lastEmail = email;
 
   try {
     if (mode === "signup") {
@@ -90,11 +132,24 @@ $("auth-form").addEventListener("submit", async (e) => {
         password,
         passwordConfirm: $("auth-confirm").value,
       });
+      // Accounts cannot authenticate until the address is confirmed, so
+      // there is no session to hand off yet — ask for the email instead.
+      await pb.collection("users").requestVerification(email);
+      showSent(email, true);
+      return;
     }
     await pb.collection("users").authWithPassword(email, password);
     location.href = "/app/";
   } catch (err) {
-    $("auth-error").textContent = authError(err);
+    // PocketBase distinguishes the two failures: 400 is bad credentials,
+    // 403 is the collection's auth rule rejecting an unverified account.
+    if (err?.status === 403) {
+      $("auth-title").textContent = "Verify your email first";
+      showSent(email, false);
+      $("auth-error").textContent = "";
+    } else {
+      $("auth-error").textContent = authError(err);
+    }
     submit.disabled = false;
   }
 });

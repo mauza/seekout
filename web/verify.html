@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verify your email — seekout</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/landing.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.2 15.2 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    seekout
+  </a>
+</header>
+
+<main class="verify-wrap">
+  <div class="card verify-card">
+    <div class="verify-icon" id="verify-icon" data-state="working">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z" fill="none" stroke="currentColor" stroke-width="2"/><path d="m4 7 8 6 8-6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+    </div>
+    <h1 id="verify-title">Verifying your email…</h1>
+    <p class="muted" id="verify-text">One moment.</p>
+
+    <div class="verify-actions" id="verify-actions" hidden>
+      <a class="btn btn-primary" id="verify-continue" href="/">Sign in</a>
+    </div>
+
+    <form class="verify-resend" id="resend-form" hidden>
+      <div class="field">
+        <label for="resend-email">Send a fresh link</label>
+        <input id="resend-email" type="email" autocomplete="email" placeholder="you@example.com" required>
+      </div>
+      <button class="btn btn-primary" type="submit" id="resend-submit">Resend verification</button>
+    </form>
+  </div>
+</main>
+
+<div class="toasts" id="toasts"></div>
+<script src="/vendor/pocketbase.umd.js"></script>
+<script src="/verify.js"></script>
+</body>
+</html>

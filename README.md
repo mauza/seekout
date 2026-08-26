@@ -34,9 +34,32 @@ go run . serve --http=127.0.0.1:8090
 go run . superuser upsert you@example.com <password>
 ```
 
-Sign up at http://127.0.0.1:8090/ — the landing page creates the account and
-drops you into the app. `superuser upsert` is only needed for the PocketBase
-dashboard at `/_/`.
+Sign up at http://127.0.0.1:8090/. Accounts must confirm their email address
+before they can sign in, so a local instance needs SMTP or the account has to
+be flipped by hand in the dashboard (`users` → `verified`). `superuser upsert`
+is only for the PocketBase dashboard at `/_/`, which is a separate collection.
+
+## Email
+
+Verification is enforced by the `users` collection's `authRule`
+(`verified = true`), which PocketBase applies after the password check on
+every auth path, answering 403 rather than the 400 of a wrong password. The
+email links to `/verify#<token>`, a static page that confirms the token and
+offers a resend.
+
+Mail settings are read from the environment on every boot
+(`internal/appsettings`) instead of being stored only in the settings row, so
+a fresh volume comes up configured:
+
+| var | note |
+|---|---|
+| `APP_URL` | what `{APP_URL}` resolves to in the email — wrong value, dead links |
+| `APP_NAME` | subject line and body |
+| `SMTP_HOST` / `SMTP_PORT` | unset host leaves stored settings alone |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | password comes from the `seekout-mail` secret in k8s |
+| `SMTP_AUTH_METHOD` | `PLAIN` or `LOGIN` |
+| `SMTP_TLS` | `false` sends STARTTLS (port 587); `true` is implicit TLS (465) |
+| `SMTP_FROM` / `SMTP_SENDER_NAME` | Zoho refuses any sender but the authenticated mailbox |
 
 ## Test
 

@@ -154,6 +154,16 @@ echo "=============== 3. auth ==============="
 SU_TOKEN=$(api POST /api/collections/_superusers/auth-with-password "" "{\"identity\":\"$EMAIL\",\"password\":\"$PASS\"}" | jqr .token)
 { [ -n "$SU_TOKEN" ] && [ "$SU_TOKEN" != "null" ]; } && ok "superuser auth" || bad "superuser auth"
 
+# A superuser is not a webapp account, and on a fresh instance the users
+# record does not exist yet — provision it rather than failing every
+# authenticated assertion that follows. Created pre-verified: the point here
+# is to exercise the app, not a mailbox.
+if [ "$(api GET "/api/collections/users/records?filter=(email='$EMAIL')" "$SU_TOKEN" | jqr .totalItems)" = "0" ]; then
+  api POST /api/collections/users/records "$SU_TOKEN" \
+    "{\"email\":\"$EMAIL\",\"password\":\"$PASS\",\"passwordConfirm\":\"$PASS\",\"verified\":true}" >/dev/null
+  printf 'INFO  created the webapp account %s\n' "$EMAIL"
+fi
+
 AUTH=$(api POST /api/collections/users/auth-with-password "" "{\"identity\":\"$EMAIL\",\"password\":\"$PASS\"}")
 TOKEN=$(echo "$AUTH" | jqr .token)
 USER_ID=$(echo "$AUTH" | jqr .record.id)
@@ -169,6 +179,44 @@ check "anonymous cannot create a source" "$(code POST /api/collections/sources/r
 check "anonymous poll denied" "$(code POST /api/seekout/sources/xxxxxxxxxxxxxxx/poll)" "401"
 check "anonymous alerter test denied" "$(code POST /api/seekout/alerters/xxxxxxxxxxxxxxx/test)" "401"
 
+# --- email verification gate ------------------------------------------------
+# Accounts must confirm their address before any auth path issues a token.
+# PocketBase enforces it via the users collection authRule, which answers 403
+# ("doesn't satisfy the collection requirements") as opposed to 400 for bad
+# credentials, so the two failures are distinguishable by the UI.
+check "users collection requires verified" \
+  "$(api GET /api/collections/users "$SU_TOKEN" | jqr .authRule)" "verified = true"
+
+PENDING_EMAIL="test-pending-$(openssl rand -hex 4)@seekout.local"
+PENDING_PASS="pending-$(openssl rand -hex 6)"
+PENDING_ID=$(api POST /api/collections/users/records "" \
+  "{\"email\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\",\"passwordConfirm\":\"$PENDING_PASS\"}" | jqr .id)
+{ [ -n "$PENDING_ID" ] && [ "$PENDING_ID" != "null" ]; } && ok "signup still open to anonymous" || bad "signup still open to anonymous"
+
+check "unverified account cannot authenticate" \
+  "$(code POST /api/collections/users/auth-with-password "" "{\"identity\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\"}")" "403"
+
+# 204 regardless of whether the address exists: no account enumeration.
+check "verification request accepted for known address" \
+  "$(code POST /api/collections/users/request-verification "" "{\"email\":\"$PENDING_EMAIL\"}")" "204"
+check "verification request leaks nothing for unknown address" \
+  "$(code POST /api/collections/users/request-verification "" '{"email":"definitely-not-a-user@seekout.local"}')" "204"
+
+api PATCH "/api/collections/users/records/$PENDING_ID" "$SU_TOKEN" '{"verified":true}' >/dev/null
+PENDING_TOKEN=$(api POST /api/collections/users/auth-with-password "" \
+  "{\"identity\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\"}" | jqr .token)
+{ [ -n "$PENDING_TOKEN" ] && [ "$PENDING_TOKEN" != "null" ]; } && ok "verified account authenticates" || bad "verified account authenticates"
+
+api DELETE "/api/collections/users/records/$PENDING_ID" "$SU_TOKEN" >/dev/null
+
+# The verification email links here, so the route must exist even though the
+# static handler has no index fallback.
+check "verify page served" "$(code GET /verify)" "200"
+check "mail transport configured" \
+  "$(api GET /api/settings "$SU_TOKEN" | jqr .smtp.enabled)" "true"
+check "mail sender configured" \
+  "$([ -n "$(api GET /api/settings "$SU_TOKEN" | jqr .meta.senderAddress)" ] && echo yes)" "yes"
+
 # An interrupted run leaves test-* records behind, which would fail the
 # leftover assertions at the end of the next one. Clear them first so the
 # suite is repeatable.
@@ -179,6 +227,11 @@ for col in seekers sources alerters; do
     api DELETE "/api/collections/$col/records/$id" "$SU_TOKEN" >/dev/null
     PURGED=$((PURGED+1))
   done
+done
+# Same for the throwaway account the verification checks create.
+for id in $(api GET "/api/collections/users/records?perPage=100&filter=(email~'test-pending-')" "$SU_TOKEN" | jqr '.items[].id'); do
+  api DELETE "/api/collections/users/records/$id" "$SU_TOKEN" >/dev/null
+  PURGED=$((PURGED+1))
 done
 [ "$PURGED" -gt 0 ] && printf 'INFO  purged %s leftover test record(s) from a previous run\n' "$PURGED"
 
@@ -432,6 +485,7 @@ check "second user gone from list" "$(api GET "/api/collections/users/records?fi
 check "no test seekers anywhere"  "$(api GET "/api/collections/seekers/records?perPage=100" "$SU_TOKEN"  | jqr '[.items[] | select(.name | startswith("test-")) | .name] | join(",")')" ""
 check "no test sources anywhere"  "$(api GET "/api/collections/sources/records?perPage=100" "$SU_TOKEN"  | jqr '[.items[] | select(.name | startswith("test-")) | .name] | join(",")')" ""
 check "no test alerters anywhere" "$(api GET "/api/collections/alerters/records?perPage=100" "$SU_TOKEN" | jqr '[.items[] | select(.name | startswith("test-")) | .name] | join(",")')" ""
+check "no test accounts anywhere" "$(api GET "/api/collections/users/records?perPage=100&filter=(email~'test-pending-')" "$SU_TOKEN" | jqr .totalItems)" "0"
 
 printf '\n=============== RESULT: %d passed, %d failed, %d skipped ===============\n' "$PASSED" "$FAILED" "$SKIPPED"
 [ "$FAILED" -eq 0 ]

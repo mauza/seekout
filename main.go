@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 
+	"gitlab.mauza.net/mauza/seekout/internal/appsettings"
 	"gitlab.mauza.net/mauza/seekout/internal/pipeline"
 	_ "gitlab.mauza.net/mauza/seekout/internal/sources" // registers source types
 	_ "gitlab.mauza.net/mauza/seekout/migrations"
@@ -27,6 +28,15 @@ var webFS embed.FS
 func main() {
 	app := pocketbase.New()
 	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{Automigrate: true})
+
+	// Mail settings come from the environment on every boot, after migrations
+	// have run, so a fresh volume is fully configured without dashboard clicks.
+	app.OnBootstrap().BindFunc(func(e *core.BootstrapEvent) error {
+		if err := e.Next(); err != nil {
+			return err
+		}
+		return appsettings.Apply(app)
+	})
 
 	if err := app.Cron().Add("poll_sources", "* * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -67,6 +77,13 @@ func main() {
 		if err != nil {
 			return err
 		}
+
+		// The verification email links here. It needs an explicit route
+		// because the static handler has no index fallback and the token
+		// rides in the URL fragment.
+		se.Router.GET("/verify", func(e *core.RequestEvent) error {
+			return e.FileFS(pub, "verify.html")
+		})
 		// No index fallback: the UI has no client-side routes, and falling
 		// back would answer unknown /api/... paths with the SPA instead of 404.
 		se.Router.GET("/{path...}", apis.Static(pub, false))
