@@ -1,7 +1,7 @@
 # seekout
 
-Listing alerts: poll sources (RSS feeds, later scrapers), match new listings
-against per-user seekers, fire alerters (ntfy, webhook/Slack).
+Listing alerts: poll sources (RSS feeds, the Utah MLS via utahrealestate.com),
+match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
 
 Single Go binary with PocketBase embedded: DB, auth, REST + realtime API,
 admin UI at `/_/`, and the webapp served from the binary.
@@ -63,6 +63,10 @@ a fresh volume comes up configured:
 
 ## Test
 
+`go test ./...` covers the pure logic that the HTTP suite can't reach: the
+`ure` card parser (against a fixture trimmed from a live response) and seeker
+condition resolution.
+
 `scripts/prod-test.sh` is an end-to-end pass against a running instance:
 transport and TLS, auth and anonymous access, ntfy/webhook delivery (verified
 by reading the messages back off the ntfy server), the condition-operator
@@ -110,6 +114,18 @@ poll.
 - realtor.com's old `mapi-ng` API is decommissioned (NXDOMAIN); Craigslist
   blocks some IPs even for RSS. Both are source-config concerns, not code —
   `last_error` on the source record surfaces failures in the UI.
+- the `ure` source (utahrealestate.com) has no public API: it opens a session
+  with a `GET /search/map.search/type/{n}`, then reads server-rendered cards
+  from the `map.inline.results` XHR and regex-parses the address/price/URL
+  out of the returned HTML. If the site's markup changes, parsing degrades
+  silently (fewer or zero listings, no `last_error`) — check the card
+  selectors at the top of `internal/sources/ure.go`.
+- seeker condition fields name a typed listing column (`title`, `price`,
+  `url`, `kind`, `description`, `external_id`, `published`) or a dot path
+  into the listing's `attrs` JSON — `sqft`, `address.city`. A leading
+  `attrs.` is accepted and ignored, so `sqft` and `attrs.sqft` are the same
+  field. `ure` listings carry `beds`, `baths`, `sqft`, `status`, `mls`,
+  `listing_type`, `days_on_market` and sometimes `open_house`.
 - replicas must stay 1 (embedded SQLite).
 - the cluster has arm64 workers, so images must be multi-arch — an
   amd64-only image crash-loops with `exec format error`.

@@ -199,7 +199,9 @@ async function loadListings() {
   state.listings = res.items;
   const keys = new Set(state.attrKeys);
   for (const l of res.items) {
-    for (const k of Object.keys(l.attrs || {})) keys.add(`attrs.${k}`);
+    // Bare keys: the matcher paths straight into attrs, so a suggested
+    // "attrs.beds" would resolve to attrs["attrs"]["beds"] and never match.
+    for (const k of Object.keys(l.attrs || {})) keys.add(k);
   }
   state.attrKeys = [...keys];
   return res.totalItems;
@@ -479,8 +481,11 @@ async function viewSeekers() {
 
 /* ---- sources ---- */
 
+const URE_TYPES = ["residential", "multi_unit", "land", "commercial", "farm", "rental"];
+
 function sourceModal(source) {
   const editing = Boolean(source);
+  const type = source?.type || "rss";
   const body = el(`
     <div class="stack">
       <div class="field">
@@ -488,8 +493,32 @@ function sourceModal(source) {
         <input name="name" required placeholder="slc cars" value="${esc(source?.name || "")}">
       </div>
       <div class="field">
-        <label>Feed URL <span class="hint">RSS or Atom</span></label>
-        <input name="url" type="url" required placeholder="https://saltlakecity.craigslist.org/search/cta?format=rss" value="${esc(source?.config?.url || "")}">
+        <label>Source type</label>
+        <select name="type">
+          <option value="rss" ${type === "rss" ? "selected" : ""}>rss &mdash; RSS or Atom feed</option>
+          <option value="ure" ${type === "ure" ? "selected" : ""}>ure &mdash; Utah MLS (utahrealestate.com)</option>
+        </select>
+      </div>
+      <div data-rss-fields ${type === "rss" ? "" : "hidden"}>
+        <div class="field">
+          <label>Feed URL <span class="hint">RSS or Atom</span></label>
+          <input name="url" type="url" placeholder="https://saltlakecity.craigslist.org/search/cta?format=rss" value="${esc(source?.config?.url || "")}">
+        </div>
+      </div>
+      <div data-ure-fields ${type === "ure" ? "" : "hidden"}>
+        <div class="row" style="gap:.8rem;align-items:flex-end">
+          <div class="field grow">
+            <label>Listing type</label>
+            <select name="ure-type">
+              ${URE_TYPES.map((t) => `<option value="${t}" ${(source?.config?.type || "residential") === t ? "selected" : ""}>${t}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field grow">
+            <label>Pages <span class="hint">50 listings each, max 5</span></label>
+            <input name="ure-pages" type="number" min="1" max="5" value="${esc(source?.config?.pages || 1)}">
+          </div>
+        </div>
+        <p class="hint">Polls the MLS newest-listings search for all of Utah.</p>
       </div>
       <div class="row" style="gap:.8rem;align-items:flex-end">
         <div class="field grow">
@@ -509,16 +538,39 @@ function sourceModal(source) {
   const enabled = switchField("enabled", source ? source.enabled : true);
   body.append(enabled);
 
+  const rssFields = body.querySelector("[data-rss-fields]");
+  const ureFields = body.querySelector("[data-ure-fields]");
+  const typeSelect = body.querySelector('[name="type"]');
+  const urlInput = body.querySelector('[name="url"]');
+
+  // The feed URL input stays in the DOM while ure is selected, and a hidden
+  // required control fails constraint validation with nothing focusable to
+  // report against - the browser then blocks submit silently. So required
+  // has to track visibility, not sit in the markup.
+  const syncType = (t) => {
+    const rss = t === "rss";
+    rssFields.hidden = !rss;
+    ureFields.hidden = rss;
+    urlInput.required = rss;
+  };
+  syncType(type);
+  typeSelect.addEventListener("change", () => syncType(typeSelect.value));
+
   openModal({
     title: editing ? "Edit source" : "New source",
     body,
     submitLabel: editing ? "Save changes" : "Create source",
     onSubmit: async () => {
+      const t = typeSelect.value;
+      const config =
+        t === "ure"
+          ? { type: body.querySelector('[name="ure-type"]').value, pages: Number(body.querySelector('[name="ure-pages"]').value) || 1 }
+          : { url: urlInput.value.trim() };
       const data = {
         name: body.querySelector('[name="name"]').value.trim(),
-        type: "rss",
+        type: t,
         kind: body.querySelector('[name="kind"]').value,
-        config: { url: body.querySelector('[name="url"]').value.trim() },
+        config,
         interval_minutes: Number(body.querySelector('[name="interval"]').value),
         enabled: enabled.querySelector("input").checked,
       };
@@ -531,6 +583,11 @@ function sourceModal(source) {
   });
 }
 
+const sourceMeta = (s) =>
+  s.type === "ure"
+    ? `utahrealestate.com · ${s.config?.type || "residential"} · ${s.config?.pages || 1} pages`
+    : s.config?.url || "";
+
 async function viewSources() {
   const add = el(`<button class="btn btn-primary">+ New source</button>`);
   add.addEventListener("click", () => sourceModal(null));
@@ -541,7 +598,7 @@ async function viewSources() {
     const cta = el(`<button class="btn btn-primary">+ New source</button>`);
     cta.addEventListener("click", () => sourceModal(null));
     box.append(emptyState(ICON_FEED, "No sources yet",
-      "Add an RSS or Atom feed — a Craigslist search, a marketplace feed, anything that lists things.", cta));
+      "Add an RSS or Atom feed, or the Utah MLS source — anything that lists things.", cta));
     $("view").replaceChildren(box);
     return;
   }
@@ -559,7 +616,7 @@ async function viewSources() {
               ${s.seeded ? "" : `<span class="badge badge-accent" title="First poll only stores the backlog">not seeded</span>`}
             </div>
             <div class="item-meta">
-              <span class="mono truncate" style="max-width:44ch">${esc(s.config?.url || "")}</span>
+              <span class="mono truncate" style="max-width:44ch">${esc(sourceMeta(s))}</span>
               <span>every ${esc(s.interval_minutes)}m</span>
               <span title="${esc(absTime(s.last_polled))}">polled ${esc(timeAgo(s.last_polled))}</span>
             </div>

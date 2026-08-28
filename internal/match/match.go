@@ -38,7 +38,9 @@ func Matches(conditions []Condition, rec *core.Record) bool {
 }
 
 // fieldValue resolves a condition field: typed listing columns first, then a
-// dot path into the attrs JSON (e.g. "beds", "address.city").
+// dot path into the attrs JSON (e.g. "beds", "address.city"). A leading
+// "attrs." is optional and stripped, since that prefix reads naturally and
+// earlier builds of the UI suggested fields in that form.
 func fieldValue(rec *core.Record, field string, attrs map[string]any) (any, bool) {
 	switch field {
 	case "title":
@@ -58,8 +60,9 @@ func fieldValue(rec *core.Record, field string, attrs map[string]any) (any, bool
 	case "published":
 		return rec.GetDateTime("published").String(), true
 	}
+	path := strings.TrimPrefix(field, "attrs.")
 	cur := any(attrs)
-	for _, part := range strings.Split(field, ".") {
+	for _, part := range strings.Split(path, ".") {
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil, false

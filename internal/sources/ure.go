@@ -1,0 +1,271 @@
+package sources
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/cookiejar"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pocketbase/pocketbase/core"
+
+	"gitlab.mauza.net/mauza/seekout/internal/listing"
+)
+
+// ureSource polls utahrealestate.com, the public search over the Utah MLS.
+//
+// The site is a jQuery app with no public JSON API: GET
+// /search/map.search/type/{n} sets the session's default search state
+// (all of Utah, that property type, active/coming-soon/backup statuses),
+// and POST /search/map.inline.results/pg/{pg}/sort/{sort}/paging/0/dh/0
+// then returns one page of results as JSON whose "html" field holds the
+// server-rendered listing cards. We poll the newest-first pages and let
+// the pipeline's (source, external_id) dedupe surface new listings.
+type ureSource struct{}
+
+type ureConfig struct {
+	// Type is a listing category: residential (default), multi_unit,
+	// land, commercial, farm, rental.
+	Type string `json:"type"`
+	// Pages is how many 50-result pages to fetch per poll (default 1).
+	Pages int `json:"pages"`
+}
+
+const ureBase = "https://www.utahrealestate.com"
+
+var ureTypeCodes = map[string]string{
+	"residential": "1",
+	"multi_unit":  "2",
+	"land":        "3",
+	"commercial":  "5",
+	"farm":        "6",
+	"rental":      "7",
+}
+
+var (
+	ureCardSplit  = regexp.MustCompile(`<li id="mls-inline-`)
+	ureListno     = regexp.MustCompile(`listno="(\d+)"`)
+	ureSlug       = regexp.MustCompile(`address="([^"]+)"`)
+	urePrice      = regexp.MustCompile(`list___price">\s*\$?([\d,]+)`)
+	ureBedsBaths  = regexp.MustCompile(`(\d+) bds &bull; (\d+) ba &bull; ([\d,]+) SqFt`)
+	ureStatus     = regexp.MustCompile(`class="[^"]*status-\d+"></i>\s*([A-Za-z_ -]+)`)
+	ureDays       = regexp.MustCompile(`Days on URE:\s*([^<]+)`)
+	ureAgent      = regexp.MustCompile(`(?s)listing___agent[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
+	ureAddress    = regexp.MustCompile(`(?s)listing___address[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
+	ureOpenHouse  = regexp.MustCompile(`(?s)openhouse___label">\s*([^<]+?)\s*</div>`)
+	urePhoto      = regexp.MustCompile(`<img src="([^"]+)" class="listing-img"`)
+	ureNumStrip   = regexp.MustCompile(`[,$]`)
+)
+
+func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing, error) {
+	var cfg ureConfig
+	if err := src.UnmarshalJSONField("config", &cfg); err != nil {
+		return nil, fmt.Errorf("ure: bad config: %w", err)
+	}
+	typeName := cfg.Type
+	if _, ok := ureTypeCodes[typeName]; !ok {
+		typeName = "residential"
+	}
+	code := ureTypeCodes[typeName]
+	pages := cfg.Pages
+	if pages <= 0 {
+		pages = 1
+	}
+	if pages > 5 {
+		pages = 5
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, fmt.Errorf("ure: cookie jar: %w", err)
+	}
+	client := &http.Client{
+		Timeout:   60 * time.Second,
+		Jar:       jar,
+		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
+	}
+
+	// A fresh session per poll: the page GET establishes the default
+	// search state, so the poll is stateless and survives cookie expiry.
+	if err := ureGet(ctx, client, ureBase+"/search/map.search/type/"+code); err != nil {
+		return nil, err
+	}
+
+	var out []listing.Listing
+	seen := map[string]bool{}
+	for pg := 1; pg <= pages; pg++ {
+		u := fmt.Sprintf("%s/search/map.inline.results/pg/%d/sort/entry_date_desc/paging/0/dh/0", ureBase, pg)
+		var res struct {
+			HTML        string `json:"html"`
+			ListingData []struct {
+				Listno string `json:"listno"`
+			} `json:"listing_data"`
+		}
+		if err := urePost(ctx, client, u, ureBase+"/search/map.search/type/"+code, &res); err != nil {
+			return nil, fmt.Errorf("ure: page %d: %w", pg, err)
+		}
+		listings, err := ureParseCards(res.HTML, typeName)
+		if err != nil {
+			return nil, fmt.Errorf("ure: page %d: %w", pg, err)
+		}
+		if len(res.ListingData) > 0 && len(listings) == 0 {
+			return nil, fmt.Errorf("ure: page %d: %d results but no parseable cards — page layout likely changed", pg, len(res.ListingData))
+		}
+		for _, l := range listings {
+			if seen[l.ExternalID] {
+				continue
+			}
+			seen[l.ExternalID] = true
+			out = append(out, l)
+		}
+		if len(res.ListingData) < 50 {
+			break // last page
+		}
+	}
+	return out, nil
+}
+
+// ureParseCards turns one page of server-rendered listing cards into
+// normalized listings.
+func ureParseCards(html string, listingType string) ([]listing.Listing, error) {
+	if html == "" {
+		return nil, nil
+	}
+	now := time.Now().UTC()
+	var out []listing.Listing
+	for _, frag := range ureCardSplit.Split(html, -1) {
+		mListno := ureListno.FindStringSubmatch(frag)
+		if len(mListno) < 2 || mListno[1] == "" {
+			continue
+		}
+		l := listing.Listing{ExternalID: mListno[1]}
+
+		if m := ureAddress.FindStringSubmatch(frag); m != nil {
+			l.Title = normalizeSpace(m[1])
+		}
+		if m := ureSlug.FindStringSubmatch(frag); m != nil {
+			l.URL = ureBase + "/" + strings.ToLower(m[1]) + "/" + l.ExternalID
+		}
+		if m := urePrice.FindStringSubmatch(frag); m != nil {
+			if price, err := strconv.ParseFloat(ureNumStrip.ReplaceAllString(m[1], ""), 64); err == nil {
+				l.Price = price
+			}
+		}
+		if m := urePhoto.FindStringSubmatch(frag); m != nil {
+			l.Image = m[1]
+		}
+		if m := ureAgent.FindStringSubmatch(frag); m != nil {
+			l.Description = normalizeSpace(m[1])
+		}
+		attrs := map[string]any{"mls": l.ExternalID, "listing_type": listingType}
+		if m := ureStatus.FindStringSubmatch(frag); m != nil {
+			attrs["status"] = normalizeSpace(m[1])
+		}
+		if m := ureBedsBaths.FindStringSubmatch(frag); m != nil {
+			for i, key := range []string{"beds", "baths", "sqft"} {
+				// SqFt is thousands-separated ("1,018"), so the separator has
+				// to go before parsing or every listing over 999 sqft - which
+				// is nearly all of them - silently loses the field.
+				if v, err := strconv.Atoi(ureNumStrip.ReplaceAllString(m[i+1], "")); err == nil {
+					attrs[key] = v
+				}
+			}
+		}
+		days, ok := ureParseDays(maybeMatch(ureDays, frag))
+		if ok {
+			attrs["days_on_market"] = days
+			l.Published = now.AddDate(0, 0, -days)
+		}
+		if m := ureOpenHouse.FindStringSubmatch(frag); m != nil && m[1] != "" {
+			attrs["open_house"] = normalizeSpace(m[1])
+		}
+		l.Attrs = attrs
+		out = append(out, l)
+	}
+	return out, nil
+}
+
+func ureParseDays(s string) (int, bool) {
+	s = normalizeSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	if s == "Just Listed" {
+		return 0, true
+	}
+	days, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return days, true
+}
+
+func ureGet(ctx context.Context, client *http.Client, rawURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return err
+	}
+	ureUA(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("GET %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	io.CopyN(io.Discard, resp.Body, 1<<20)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+	}
+	return nil
+}
+
+func urePost(ctx context.Context, client *http.Client, rawURL, referer string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(""))
+	if err != nil {
+		return err
+	}
+	ureUA(req)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("Referer", referer)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", rawURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("POST %s: status %d", rawURL, resp.StatusCode)
+	}
+	if err := json.Unmarshal(body, v); err != nil {
+		return fmt.Errorf("POST %s: bad JSON: %w", rawURL, err)
+	}
+	return nil
+}
+
+func ureUA(req *http.Request) {
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+}
+
+// maybeMatch returns the first regex match in s as a joined group-1
+// slice entry, or "".
+func maybeMatch(re *regexp.Regexp, s string) string {
+	if m := re.FindStringSubmatch(s); m != nil && len(m) > 1 {
+		return m[1]
+	}
+	return ""
+}
+
+func normalizeSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func init() {
+	Register("ure", ureSource{})
+}
