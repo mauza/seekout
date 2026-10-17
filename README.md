@@ -61,6 +61,37 @@ a fresh volume comes up configured:
 | `SMTP_TLS` | `false` sends STARTTLS (port 587); `true` is implicit TLS (465) |
 | `SMTP_FROM` / `SMTP_SENDER_NAME` | Zoho refuses any sender but the authenticated mailbox |
 
+## MCP
+
+`/mcp` is a stateless streamable-HTTP MCP server (`internal/mcpserver`) for
+agents such as Hermes. Its tools cover sources (list, create, poll),
+listings (`search_listings` takes seeker-style conditions and is a good way
+to try conditions out before saving them), seekers (CRUD), alerters (list,
+test) and alerts. It runs alongside the cron poller and the web UI, not
+instead of them: MCP is request/response, so alert delivery stays here.
+
+Auth is a PocketBase `users` token sent as `Authorization: Bearer <token>`,
+and every tool acts as that user. The tools run server-side, so the
+collection API rules don't apply to them; each tool scopes to the caller
+itself. Mint a long-lived token (the default is 365 days; changing the
+user's password revokes it):
+
+```sh
+kubectl -n seekout exec deploy/seekout -- /seekout mcp-token you@example.com --dir=/pb/pb_data
+```
+
+Hermes config (`mcp_servers`), with the token in Hermes's `/opt/data/.env`
+as `SEEKOUT_MCP_TOKEN`:
+
+```yaml
+seekout:
+  url: "http://seekout.seekout/mcp"
+  headers:
+    Authorization: "Bearer ${SEEKOUT_MCP_TOKEN}"
+  tools:
+    exclude: ["delete_*"]
+```
+
 ## Test
 
 `go test ./...` covers the pure logic that the HTTP suite can't reach: the

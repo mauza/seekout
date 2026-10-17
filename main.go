@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"embed"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -15,8 +16,10 @@ import (
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/spf13/cobra"
 
 	"gitlab.mauza.net/mauza/seekout/internal/appsettings"
+	"gitlab.mauza.net/mauza/seekout/internal/mcpserver"
 	"gitlab.mauza.net/mauza/seekout/internal/pipeline"
 	_ "gitlab.mauza.net/mauza/seekout/internal/sources" // registers source types
 	_ "gitlab.mauza.net/mauza/seekout/migrations"
@@ -24,6 +27,9 @@ import (
 
 //go:embed all:web
 var webFS embed.FS
+
+// version is reported to MCP clients; keep it in step with the image tag.
+const version = "0.5.0"
 
 func main() {
 	app := pocketbase.New()
@@ -37,6 +43,8 @@ func main() {
 		}
 		return appsettings.Apply(app)
 	})
+
+	app.RootCmd.AddCommand(mcpTokenCmd(app))
 
 	if err := app.Cron().Add("poll_sources", "* * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -73,6 +81,15 @@ func main() {
 			return e.JSON(http.StatusOK, map[string]bool{"ok": true})
 		}).Bind(apis.RequireAuth())
 
+		// MCP for agents (Hermes). Auth is its own bearer check, so it
+		// answers MCP clients with a 401 + WWW-Authenticate they understand.
+		// Explicit methods: a method-less "/mcp" conflicts with the
+		// "GET /{path...}" static route below and panics the router.
+		mcpHandler := apis.WrapStdHandler(mcpserver.Handler(app, version))
+		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodDelete} {
+			se.Router.Route(method, "/mcp", mcpHandler)
+		}
+
 		pub, err := fs.Sub(webFS, "web")
 		if err != nil {
 			return err
@@ -94,4 +111,38 @@ func main() {
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// mcpTokenCmd mints a long-lived, non-refreshable auth token for a user, for
+// MCP clients that can only hold a static bearer token. Changing the user's
+// password invalidates every token issued this way.
+func mcpTokenCmd(app *pocketbase.PocketBase) *cobra.Command {
+	var days int
+	cmd := &cobra.Command{
+		Use:   "mcp-token <email>",
+		Short: "Print a static MCP bearer token for a user",
+		Args:  cobra.ExactArgs(1),
+		// Runtime errors (unknown email) are not usage errors.
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := app.Bootstrap(); err != nil {
+				return err
+			}
+			user, err := app.FindAuthRecordByEmail("users", args[0])
+			if err != nil {
+				return fmt.Errorf("user %q: %w", args[0], err)
+			}
+			if !user.Verified() {
+				return fmt.Errorf("user %q has not verified their email", args[0])
+			}
+			token, err := user.NewStaticAuthToken(time.Duration(days) * 24 * time.Hour)
+			if err != nil {
+				return err
+			}
+			fmt.Println(token)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&days, "days", 365, "token lifetime in days")
+	return cmd
 }

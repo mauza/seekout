@@ -6,6 +6,8 @@ package match
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -17,6 +19,22 @@ type Condition struct {
 	Field string `json:"field"`
 	Op    string `json:"op"`   // "=", "!=", ">", "<", ">=", "<=", "in", "contains"
 	Value any    `json:"value"`
+}
+
+// Ops lists the supported condition operators.
+var Ops = []string{"=", "!=", ">", "<", ">=", "<=", "in", "contains"}
+
+// Validate rejects conditions Matches would silently treat as never-true.
+func Validate(conditions []Condition) error {
+	for i, c := range conditions {
+		if c.Field == "" {
+			return fmt.Errorf("condition %d: field is required", i)
+		}
+		if !slices.Contains(Ops, c.Op) {
+			return fmt.Errorf("condition %d: op %q is not one of %s", i, c.Op, strings.Join(Ops, " "))
+		}
+	}
+	return nil
 }
 
 // Matches returns true when every condition holds for the listing (logical
