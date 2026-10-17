@@ -1,6 +1,7 @@
 package match
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -92,5 +93,52 @@ func TestMatchesConditionsAreAnded(t *testing.T) {
 	// A malformed row must not silently pass.
 	if Matches([]Condition{{Field: "", Op: "=", Value: "x"}}, rec) {
 		t.Error("condition with no field, want no match")
+	}
+}
+
+// The live "Lehi home" seeker, decoded from JSON exactly as it is stored,
+// against detail-enriched URE attrs. Each variant breaks one condition, so
+// every filter (including the boolean hoa = false) is shown to exclude.
+func TestMatchesEnrichedHomeSeeker(t *testing.T) {
+	var conds []Condition
+	if err := json.Unmarshal([]byte(`[
+		{"field":"city","op":"=","value":"Lehi"},
+		{"field":"status","op":"in","value":["ACTIVE","COMING SOON"]},
+		{"field":"price","op":">","value":0},
+		{"field":"price","op":"<=","value":750000},
+		{"field":"beds","op":">=","value":4},
+		{"field":"sqft","op":">","value":2800},
+		{"field":"garage_capacity","op":">=","value":3},
+		{"field":"lot_acres","op":">=","value":0.15},
+		{"field":"hoa","op":"=","value":false}]`), &conds); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(conds); err != nil {
+		t.Fatal(err)
+	}
+	base := func() map[string]any {
+		return map[string]any{"city": "Lehi", "status": "ACTIVE", "beds": 4, "sqft": 3100,
+			"garage_capacity": 3, "lot_acres": 0.21, "hoa": false}
+	}
+	if rec := listingRecord(t, base()); !Matches(conds, rec) {
+		t.Fatal("qualifying Lehi listing did not match")
+	}
+	breaks := map[string]func(map[string]any){
+		"other city":     func(a map[string]any) { a["city"] = "Orem" },
+		"under contract": func(a map[string]any) { a["status"] = "UNDER CONTRACT" },
+		"3 beds":         func(a map[string]any) { a["beds"] = 3 },
+		"2800 sqft":      func(a map[string]any) { a["sqft"] = 2800 },
+		"2-car":          func(a map[string]any) { a["garage_capacity"] = 2 },
+		"no garage line": func(a map[string]any) { delete(a, "garage_capacity") },
+		"0.14 acres":     func(a map[string]any) { a["lot_acres"] = 0.14 },
+		"has HOA":        func(a map[string]any) { a["hoa"] = true },
+		"not enriched":   func(a map[string]any) { delete(a, "hoa") },
+	}
+	for name, mutate := range breaks {
+		a := base()
+		mutate(a)
+		if Matches(conds, listingRecord(t, a)) {
+			t.Errorf("%s: matched, want excluded", name)
+		}
 	}
 }
