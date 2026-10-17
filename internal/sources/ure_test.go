@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gitlab.mauza.net/mauza/seekout/internal/listing"
 )
 
 // One page of cards, trimmed from a live map.inline.results response to the
@@ -205,5 +207,90 @@ func TestUreCSRFHandshake(t *testing.T) {
 	err = urePost(ctx, srv.Client(), srv.URL, srv.URL, "wrong", &res)
 	if err == nil || !strings.Contains(err.Error(), "empty response") {
 		t.Fatalf("urePost without a valid token: err = %v, want an empty-response error", err)
+	}
+}
+
+// Detail-page markup trimmed from live pages (2026-10): an HOA listing
+// has a hoa_info block, a no-HOA listing has no HOA markup at all.
+const ureDetailHOA = `<meta property="og:url" content="https://www.utahrealestate.com/2191732" />
+<h2 class="property-features">Property Features</h2>
+<div id="Accordion_1" class="toggle" style="display: none;"> <ul id="hoa_info"> <li>$96/Annually</li> <li>HOA Rental Cap: No</li> </ul></div>
+<li>Garage/Parking: Attached; Opener</li> <li>Garage Capacity: 3</li>
+<ul> <li>Lot Size: 0.25 Acres</li> </ul>`
+
+const ureDetailNoHOA = `<meta property="og:url" content="https://www.utahrealestate.com/2191731" />
+<h2 class="property-features">Property Features</h2>
+<ul> <li>Lot Size: 0.26 Acres</li> </ul>`
+
+func TestUreParseDetail(t *testing.T) {
+	l := listing.Listing{ExternalID: "2191732", Attrs: map[string]any{"beds": 4}}
+	if err := ureParseDetail(ureDetailHOA, &l); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{"beds": 4, "garage_capacity": 3, "lot_acres": 0.25, "hoa": true, "hoa_fee": "$96/Annually"}
+	for k, v := range want {
+		if l.Attrs[k] != v {
+			t.Errorf("%s = %v, want %v", k, l.Attrs[k], v)
+		}
+	}
+
+	l = listing.Listing{ExternalID: "2191731"}
+	if err := ureParseDetail(ureDetailNoHOA, &l); err != nil {
+		t.Fatal(err)
+	}
+	if l.Attrs["hoa"] != false || l.Attrs["lot_acres"] != 0.26 {
+		t.Errorf("no-HOA page: attrs = %v, want hoa=false lot_acres=0.26", l.Attrs)
+	}
+	// No "Garage Capacity" line: absent, so a garage condition fails
+	// rather than matching on a guessed value.
+	if _, ok := l.Attrs["garage_capacity"]; ok {
+		t.Errorf("garage_capacity = %v, want absent", l.Attrs["garage_capacity"])
+	}
+
+	// A page that is not this listing's detail page (another listing, a
+	// block page, a redesign) must error, never read as "no HOA".
+	for name, page := range map[string]string{
+		"other listing": ureDetailNoHOA,
+		"block page":    `<html><title>Access denied</title></html>`,
+	} {
+		l = listing.Listing{ExternalID: "2191732"}
+		if err := ureParseDetail(page, &l); err == nil {
+			t.Errorf("%s: no error, attrs = %v", name, l.Attrs)
+		}
+		if _, ok := l.Attrs["hoa"]; ok {
+			t.Errorf("%s: hoa set to %v", name, l.Attrs["hoa"])
+		}
+	}
+}
+
+// Enrich follows the site's redirect for a listing pulled since the
+// results page and records it as off market rather than failing the poll.
+func TestUreEnrichOffMarket(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/607-e-kensington-ave-salt-lake-city-ut-84105/2191712":
+			http.Redirect(w, r, "/report/public.offmarket/id/490350092894", http.StatusFound)
+		case "/2191732":
+			w.Write([]byte(ureDetailHOA))
+		default:
+			w.Write([]byte(`<title>Reports | UtahRealEstate.com</title>`))
+		}
+	}))
+	defer srv.Close()
+
+	l := listing.Listing{ExternalID: "2191712", URL: srv.URL + "/607-e-kensington-ave-salt-lake-city-ut-84105/2191712", Attrs: map[string]any{"status": "ACTIVE"}}
+	if err := (ureSource{}).Enrich(context.Background(), nil, &l); err != nil {
+		t.Fatalf("off-market listing: %v", err)
+	}
+	if l.Attrs["status"] != "OFF MARKET" {
+		t.Errorf("status = %v, want OFF MARKET", l.Attrs["status"])
+	}
+	if _, ok := l.Attrs["hoa"]; ok {
+		t.Error("hoa set for an off-market listing")
+	}
+
+	l = listing.Listing{ExternalID: "2191732", URL: srv.URL + "/2191732", Attrs: map[string]any{}}
+	if err := (ureSource{}).Enrich(context.Background(), nil, &l); err != nil || l.Attrs["garage_capacity"] != 3 {
+		t.Fatalf("detail page: err = %v, attrs = %v", err, l.Attrs)
 	}
 }

@@ -16,6 +16,13 @@ type Source interface {
 	Poll(ctx context.Context, src *core.Record) ([]listing.Listing, error)
 }
 
+// Enricher is optionally implemented by a Source whose list results are
+// thin (e.g. no garage or lot size): the pipeline calls Enrich only for
+// listings it has not stored before, so a per-listing request is paid once.
+type Enricher interface {
+	Enrich(ctx context.Context, src *core.Record, l *listing.Listing) error
+}
+
 var registry = map[string]Source{}
 
 // Register wires a source type name (the sources.type select value) to its

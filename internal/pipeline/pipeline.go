@@ -89,8 +89,18 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 		}
 	}
 
+	// Detail enrichment costs a request per listing, so it runs only for
+	// listings not stored yet. A listing whose enrichment fails is not
+	// stored either: the next poll sees it as new and retries.
+	enricher, _ := impl.(sources.Enricher)
+	var enrichErrs []error
+
 	for _, l := range listings {
-		rec, isNew, err := saveListing(app, src, l)
+		rec, isNew, err := saveListing(ctx, app, src, l, enricher)
+		if errors.Is(err, errEnrich) {
+			enrichErrs = append(enrichErrs, err)
+			continue
+		}
 		if err != nil {
 			app.Logger().Error("save listing", "source", stats.Source, "external_id", l.ExternalID, "error", err)
 			continue
@@ -123,12 +133,19 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 	if seeding {
 		src.Set("seeded", true)
 	}
-	return stats, finishSource(app, src, nil)
+	var pollErr error
+	if len(enrichErrs) > 0 {
+		pollErr = fmt.Errorf("%d new listing(s) skipped until next poll: %w", len(enrichErrs), enrichErrs[0])
+	}
+	return stats, finishSource(app, src, pollErr)
 }
 
+var errEnrich = errors.New("enrich")
+
 // saveListing inserts the listing unless (source, external_id) already
-// exists. Returns the record and false for duplicates.
-func saveListing(app core.App, src *core.Record, l listing.Listing) (*core.Record, bool, error) {
+// exists. Returns the record and false for duplicates. A non-nil enricher
+// fills in the new listing before the insert; its failure wraps errEnrich.
+func saveListing(ctx context.Context, app core.App, src *core.Record, l listing.Listing, enricher sources.Enricher) (*core.Record, bool, error) {
 	existing, err := app.FindFirstRecordByFilter("listings",
 		"source = {:s} && external_id = {:e}",
 		dbx.Params{"s": src.Id, "e": l.ExternalID})
@@ -137,6 +154,12 @@ func saveListing(app core.App, src *core.Record, l listing.Listing) (*core.Recor
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, false, err
+	}
+
+	if enricher != nil {
+		if err := enricher.Enrich(ctx, src, &l); err != nil {
+			return nil, false, fmt.Errorf("%w: %s: %w", errEnrich, l.ExternalID, err)
+		}
 	}
 
 	col, err := app.FindCollectionByNameOrId("listings")

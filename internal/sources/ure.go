@@ -65,6 +65,10 @@ var (
 	urePhoto     = regexp.MustCompile(`<img src="([^"]+)" class="listing-img"`)
 	ureNumStrip  = regexp.MustCompile(`[,$]`)
 	ureCSRF      = regexp.MustCompile(`<meta name="csrf-token" content="([^"]+)"`)
+	ureGarage    = regexp.MustCompile(`Garage Capacity:\s*(\d+)`)
+	ureLotAcres  = regexp.MustCompile(`Lot Size:\s*([\d.]+)\s*Acres`)
+	ureOGListno  = regexp.MustCompile(`<meta property="og:url" content="https?://www\.utahrealestate\.com/(\d+)"`)
+	ureHOAFee    = regexp.MustCompile(`<ul id="hoa_info">\s*<li>\s*([^<]*?)\s*</li>`)
 	ureZip       = regexp.MustCompile(`^\d{5}$`)
 	// City words in the address slug are Title-case; street words are
 	// UPPERCASE, numbers or single letters ("3311-W-3550-230-West-Haven").
@@ -138,6 +142,74 @@ func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing,
 		}
 	}
 	return out, nil
+}
+
+// Enrich reads the listing's detail page for what the result cards lack:
+// garage_capacity, lot_acres, hoa and hoa_fee. Listings with an HOA have a
+// <ul id="hoa_info"> block and listings without one have no HOA markup at
+// all, so hoa=false is only trusted on a page proven to be this listing's
+// full detail page; anything else is an error, never a silent "no HOA".
+func (ureSource) Enrich(ctx context.Context, _ *core.Record, l *listing.Listing) error {
+	if l.URL == "" {
+		return fmt.Errorf("ure: no detail URL")
+	}
+	client := &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
+	if err != nil {
+		return err
+	}
+	ureUA(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ure detail: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return fmt.Errorf("ure detail: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ure detail %s: status %d", l.URL, resp.StatusCode)
+	}
+	// A listing pulled between the results page and this fetch redirects
+	// to an off-market report. That is a final answer, not a failure: store
+	// it without detail (so it can't match) instead of retrying forever.
+	if strings.Contains(resp.Request.URL.Path, "/report/public.offmarket") {
+		if l.Attrs == nil {
+			l.Attrs = map[string]any{}
+		}
+		l.Attrs["status"] = "OFF MARKET"
+		return nil
+	}
+	return ureParseDetail(string(body), l)
+}
+
+// ureParseDetail adds detail-page facts to l.Attrs.
+func ureParseDetail(page string, l *listing.Listing) error {
+	// The canonical og:url names the listing the page is really about.
+	if m := ureOGListno.FindStringSubmatch(page); m == nil || m[1] != l.ExternalID ||
+		!strings.Contains(page, "Property Features") {
+		return fmt.Errorf("ure detail %s: not a full detail page for MLS# %s — layout likely changed", l.URL, l.ExternalID)
+	}
+	if l.Attrs == nil {
+		l.Attrs = map[string]any{}
+	}
+	if m := ureGarage.FindStringSubmatch(page); m != nil {
+		if v, err := strconv.Atoi(m[1]); err == nil {
+			l.Attrs["garage_capacity"] = v
+		}
+	}
+	if m := ureLotAcres.FindStringSubmatch(page); m != nil {
+		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+			l.Attrs["lot_acres"] = v
+		}
+	}
+	m := ureHOAFee.FindStringSubmatch(page)
+	l.Attrs["hoa"] = m != nil
+	if m != nil && m[1] != "" {
+		l.Attrs["hoa_fee"] = normalizeSpace(m[1])
+	}
+	return nil
 }
 
 // ureParseCards turns one page of server-rendered listing cards into

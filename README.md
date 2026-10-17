@@ -159,7 +159,17 @@ poll.
   `attrs.` is accepted and ignored, so `sqft` and `attrs.sqft` are the same
   field. `ure` listings carry `beds`, `baths`, `sqft`, `status`, `mls`,
   `listing_type`, `days_on_market`, `zip`, usually `city` (left out when
-  the address slug is ambiguous) and sometimes `open_house`. Newest-first
+  the address slug is ambiguous) and sometimes `open_house`. Detail-page
+  enrichment adds `garage_capacity` (absent when the listing names none),
+  `lot_acres`, `hoa` (true/false) and `hoa_fee`; a listing that went off
+  market before its detail fetch is stored with `status` `OFF MARKET` and
+  no detail fields.
+- detail enrichment (`sources.Enricher`) costs one request per listing, so
+  the pipeline runs it only for listings not stored yet. If it fails the
+  listing is not stored, the next poll retries it, and `last_error` says
+  how many were skipped. `hoa=false` is only recorded on a page whose
+  `og:url` names the same MLS number: a block page or a redesign must
+  error, not read as "no HOA". Newest-first
   results also include a few `SOLD` / `UNDER CONTRACT` rows, so home seekers
   want a `status in ACTIVE,COMING SOON` condition.
 - replicas must stay 1 (embedded SQLite).
