@@ -1,12 +1,18 @@
 // Package alerters delivers match notifications. An alerter type is one
-// file plus a Register call; alerter records pick one by name.
+// file: implement Alerter, describe its config with a plugin.Info, and
+// Register both from init(). As with sources, registration also adds the
+// type to the alerters.type select, validates saves, and lists it in the UI.
 package alerters
 
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/mauza/seekout/internal/plugin"
 )
 
 // Alert is the notification payload handed to every alerter.
@@ -17,25 +23,46 @@ type Alert struct {
 	Image string
 }
 
-// Alerter sends one alert using the config stored on its record.
+// Alerter sends one alert using the config stored on its record. Bound
+// the send with its own timeout: a hung target must not stall a poll.
 type Alerter interface {
 	Send(ctx context.Context, rec *core.Record, alert Alert) error
 }
 
-var registry = map[string]Alerter{}
+type entry struct {
+	info plugin.Info
+	impl Alerter
+}
 
-// Register wires an alerter type name (the alerters.type select value) to
+var registry = map[string]entry{}
+
+// Register wires an alerter type (info.Type, the alerters.type value) to
 // its implementation. Called from init() in each alerter file.
-func Register(typ string, a Alerter) {
-	registry[typ] = a
+func Register(info plugin.Info, a Alerter) {
+	registry[info.Type] = entry{info, a}
 }
 
 // For resolves the implementation for an alerter record's type.
 func For(rec *core.Record) (Alerter, error) {
-	typ := rec.GetString("type")
-	a, ok := registry[typ]
+	e, ok := registry[rec.GetString("type")]
 	if !ok {
-		return nil, fmt.Errorf("unknown alerter type %q", typ)
+		return nil, fmt.Errorf("unknown alerter type %q", rec.GetString("type"))
 	}
-	return a, nil
+	return e.impl, nil
+}
+
+// Info returns the registered description of an alerter type.
+func Info(typ string) (plugin.Info, bool) {
+	e, ok := registry[typ]
+	return e.info, ok
+}
+
+// Infos returns every registered type, sorted by name.
+func Infos() []plugin.Info {
+	out := make([]plugin.Info, 0, len(registry))
+	for _, e := range registry {
+		out = append(out, e.info)
+	}
+	slices.SortFunc(out, func(a, b plugin.Info) int { return strings.Compare(a.Type, b.Type) })
+	return out
 }

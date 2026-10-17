@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/mauza/seekout/internal/plugin"
 )
 
 type ntfyConfig struct {
@@ -71,5 +73,17 @@ func (ntfyAlerter) Send(ctx context.Context, rec *core.Record, alert Alert) erro
 }
 
 func init() {
-	Register("ntfy", ntfyAlerter{})
+	Register(plugin.Info{
+		Type:        "ntfy",
+		Label:       "ntfy push",
+		Description: "Push to a phone or desktop through an ntfy server (ntfy.sh or self-hosted).",
+		Fields: []plugin.Field{
+			{Key: "url", Label: "Server", Type: plugin.URL, Default: "https://ntfy.sh", Placeholder: "https://ntfy.sh",
+				Hint: "defaults to https://ntfy.sh"},
+			{Key: "topic", Label: "Topic", Type: plugin.Text, Required: true, Placeholder: "pick-something-unguessable"},
+			{Key: "token", Label: "Token", Type: plugin.Secret, Hint: "optional"},
+			{Key: "priority", Label: "Priority", Type: plugin.Text, Hint: "1–5"},
+			{Key: "tags", Label: "Tags", Type: plugin.Text, Placeholder: "house", Hint: "comma separated"},
+		},
+	}, ntfyAlerter{})
 }

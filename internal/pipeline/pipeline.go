@@ -1,5 +1,10 @@
-// Package pipeline wires sources → dedup → matcher → alerters. It replaces
-// the oprah Pub/Sub fan-out with direct in-process calls.
+// Package pipeline is seekout's one data path, run per source poll:
+//
+//	source.Poll → dedupe on (source, external_id) → Enrich new listings
+//	→ store → match every enabled seeker → alert record + alerter fan-out
+//
+// It is driven by the minute cron (PollDue) and by on-demand polls (the
+// web UI's "poll now" and MCP poll_source), all through PollSource.
 package pipeline
 
 import (
@@ -8,15 +13,16 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"gitlab.mauza.net/mauza/seekout/internal/alerters"
-	"gitlab.mauza.net/mauza/seekout/internal/listing"
-	"gitlab.mauza.net/mauza/seekout/internal/match"
-	"gitlab.mauza.net/mauza/seekout/internal/sources"
+	"github.com/mauza/seekout/internal/alerters"
+	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/match"
+	"github.com/mauza/seekout/internal/sources"
 )
 
 // Stats summarizes one source poll (also the poll endpoint's response).
@@ -48,6 +54,9 @@ func PollDue(ctx context.Context, app core.App) {
 			continue
 		}
 		stats, err := PollSource(ctx, app, src)
+		if errors.Is(err, ErrBusy) {
+			continue
+		}
 		if err != nil {
 			app.Logger().Error("poll failed", "source", src.GetString("name"), "error", err)
 		} else {
@@ -58,6 +67,15 @@ func PollDue(ctx context.Context, app core.App) {
 	}
 }
 
+// ErrBusy is returned by PollSource when the source is already being polled.
+var ErrBusy = errors.New("source is already being polled")
+
+// polling holds the ids of sources with a poll in flight. The cron fires
+// PollDue every minute without waiting for the previous run, and last_polled
+// is only written when a poll ends, so a poll slower than a minute (detail
+// enrichment) would otherwise be started again on top of itself.
+var polling sync.Map
+
 // PollSource fetches one source, stores new listings, and fires alerts for
 // every matching seeker. It always records last_polled/last_error on the
 // source so failures don't retry on every cron tick.
@@ -67,15 +85,19 @@ func PollDue(ctx context.Context, app core.App) {
 // notifications the moment a source is added.
 func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, error) {
 	stats := Stats{Source: src.GetString("name")}
+	if _, busy := polling.LoadOrStore(src.Id, true); busy {
+		return stats, ErrBusy
+	}
+	defer polling.Delete(src.Id)
 
 	impl, err := sources.For(src)
 	if err != nil {
-		return stats, finishSource(app, src, err)
+		return stats, finishSource(app, src, false, err)
 	}
 
 	listings, err := impl.Poll(ctx, src)
 	if err != nil {
-		return stats, finishSource(app, src, err)
+		return stats, finishSource(app, src, false, err)
 	}
 	stats.Fetched = len(listings)
 
@@ -85,7 +107,7 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 	if !seeding {
 		seekers, err = app.FindRecordsByFilter("seekers", "enabled = true", "", 0, 0)
 		if err != nil {
-			return stats, finishSource(app, src, fmt.Errorf("list seekers: %w", err))
+			return stats, finishSource(app, src, false, fmt.Errorf("list seekers: %w", err))
 		}
 	}
 
@@ -131,14 +153,14 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 	}
 
 	stats.Seeded = seeding
-	if seeding {
-		src.Set("seeded", true)
-	}
 	var pollErr error
 	if len(enrichErrs) > 0 {
 		pollErr = fmt.Errorf("%d new listing(s) skipped until next poll: %w", len(enrichErrs), enrichErrs[0])
 	}
-	return stats, finishSource(app, src, pollErr)
+	// Seeded even when some listings failed enrichment: those are retried
+	// and would then alert as new, but one listing that never enriches
+	// must not keep the whole source from ever alerting.
+	return stats, finishSource(app, src, seeding, pollErr)
 }
 
 var errEnrich = errors.New("enrich")
@@ -235,6 +257,12 @@ func fireAlert(ctx context.Context, app core.App, seeker, listingRec *core.Recor
 			continue
 		}
 		entry["name"] = arec.GetString("name")
+		// The seekers validate hook stops this on save; checked again here
+		// for records saved before it existed.
+		if arec.GetString("user") != seeker.GetString("user") {
+			entry["error"] = "alerter belongs to another user"
+			continue
+		}
 		if !arec.GetBool("enabled") {
 			entry["error"] = "disabled"
 			continue
@@ -258,11 +286,11 @@ func fireAlert(ctx context.Context, app core.App, seeker, listingRec *core.Recor
 	return nil
 }
 
-// TestAlerter sends a sample notification through one alerter record.
-func TestAlerter(ctx context.Context, app core.App, id string) error {
+// TestAlerter sends a sample notification through one of userID's alerters.
+func TestAlerter(ctx context.Context, app core.App, id, userID string) error {
 	rec, err := app.FindRecordById("alerters", id)
-	if err != nil {
-		return fmt.Errorf("alerter not found: %w", err)
+	if err != nil || rec.GetString("user") != userID {
+		return fmt.Errorf("alerter %q not found", id)
 	}
 	impl, err := alerters.For(rec)
 	if err != nil {
@@ -288,14 +316,38 @@ func alertBody(rec *core.Record, res match.Result) string {
 	return body
 }
 
-func finishSource(app core.App, src *core.Record, pollErr error) error {
-	src.Set("last_polled", time.Now().UTC().Format("2006-01-02 15:04:05.000Z"))
-	errStr := ""
-	if pollErr != nil {
-		errStr = pollErr.Error()
+// finishSource records the poll on the source: last_polled, last_error and,
+// once the first poll has ingested the backlog, seeded. It writes onto a fresh copy of the
+// record because src was loaded before a poll that can take minutes; saving
+// src itself would revert anything edited meanwhile (a paused source, a new
+// feed URL). The fields are mirrored onto src for the caller.
+func finishSource(app core.App, src *core.Record, seeded bool, pollErr error) error {
+	fields := map[string]any{
+		"last_polled": time.Now().UTC().Format("2006-01-02 15:04:05.000Z"),
+		"last_error":  "",
 	}
-	src.Set("last_error", errStr)
-	if err := app.Save(src); err != nil {
+	if pollErr != nil {
+		fields["last_error"] = pollErr.Error()
+	}
+	if seeded {
+		fields["seeded"] = true
+	}
+	for k, v := range fields {
+		src.Set(k, v)
+	}
+	fresh, err := app.FindRecordById("sources", src.Id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return pollErr // deleted mid-poll; nothing to record
+	}
+	if err != nil {
+		return errors.Join(pollErr, err)
+	}
+	for k, v := range fields {
+		fresh.Set(k, v)
+	}
+	// No validation: bookkeeping must land even on a source whose config a
+	// newer rule would reject, or it would be re-polled every minute.
+	if err := app.SaveNoValidate(fresh); err != nil {
 		return errors.Join(pollErr, err)
 	}
 	return pollErr

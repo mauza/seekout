@@ -6,32 +6,34 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"time"
 
-	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/spf13/cobra"
 
-	"gitlab.mauza.net/mauza/seekout/internal/appsettings"
-	"gitlab.mauza.net/mauza/seekout/internal/match"
-	"gitlab.mauza.net/mauza/seekout/internal/mcpserver"
-	"gitlab.mauza.net/mauza/seekout/internal/pipeline"
-	_ "gitlab.mauza.net/mauza/seekout/internal/sources" // registers source types
-	_ "gitlab.mauza.net/mauza/seekout/migrations"
+	"github.com/mauza/seekout/internal/alerters"
+	"github.com/mauza/seekout/internal/appsettings"
+	"github.com/mauza/seekout/internal/hooks"
+	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/mcpserver"
+	"github.com/mauza/seekout/internal/pipeline"
+	"github.com/mauza/seekout/internal/sources"
+	_ "github.com/mauza/seekout/migrations"
 )
 
 //go:embed all:web
 var webFS embed.FS
 
 // version is reported to MCP clients; keep it in step with the image tag.
-const version = "0.6.0"
+const version = "0.7.0"
 
 func main() {
 	app := pocketbase.New()
@@ -46,21 +48,12 @@ func main() {
 		return appsettings.Apply(app)
 	})
 
-	app.RootCmd.AddCommand(mcpTokenCmd(app))
+	app.RootCmd.AddCommand(mcpTokenCmd(app), adminCmd(app))
 
-	// Seeker conditions are free-form JSON, so a malformed one (a typo'd op,
-	// a soft condition without floor/best) would otherwise be stored and then
-	// silently never match. Checked on every save path: web UI, REST and MCP.
-	app.OnRecordValidate("seekers").BindFunc(func(e *core.RecordEvent) error {
-		var conds []match.Condition
-		if err := e.Record.UnmarshalJSONField("conditions", &conds); err != nil {
-			return validation.Errors{"conditions": validation.NewError("invalid_conditions", "conditions: "+err.Error())}
-		}
-		if err := match.Validate(conds); err != nil {
-			return validation.Errors{"conditions": validation.NewError("invalid_conditions", err.Error())}
-		}
-		return e.Next()
-	})
+	// Record rules the collection API rules can't express (seeker conditions,
+	// alerter ownership, per-type config); they cover the REST API, MCP and
+	// server code alike.
+	hooks.Bind(app)
 
 	if err := app.Cron().Add("poll_sources", "* * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -71,6 +64,23 @@ func main() {
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
+		// Migrations have run by now. Registered source/alerter types and
+		// listing kinds join their select fields here, so adding one needs
+		// no migration.
+		if err := hooks.SyncSelects(app); err != nil {
+			return err
+		}
+
+		// What the web UI builds its forms from: every source and alerter
+		// type with its config fields, and the listing kinds.
+		se.Router.GET("/api/seekout/plugins", func(e *core.RequestEvent) error {
+			return e.JSON(http.StatusOK, map[string]any{
+				"sources":  sources.Infos(),
+				"alerters": alerters.Infos(),
+				"kinds":    listing.Kinds,
+			})
+		}).Bind(apis.RequireAuth())
+
 		// On-demand poll for one source (the web UI's "poll now" button).
 		// The pipeline runs on a context detached from the request: a client
 		// that disconnects mid-poll must not cancel alert delivery and leave
@@ -83,15 +93,18 @@ func main() {
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(e.Request.Context()), 10*time.Minute)
 			defer cancel()
 			stats, err := pipeline.PollSource(ctx, app, src)
+			if errors.Is(err, pipeline.ErrBusy) {
+				return e.Error(http.StatusConflict, "This source is already being polled; try again in a minute.", nil)
+			}
 			if err != nil {
 				return e.BadRequestError("poll failed", err)
 			}
 			return e.JSON(http.StatusOK, stats)
 		}).Bind(apis.RequireAuth())
 
-		// Send a test notification through one alerter.
+		// Send a test notification through one of the caller's alerters.
 		se.Router.POST("/api/seekout/alerters/{id}/test", func(e *core.RequestEvent) error {
-			if err := pipeline.TestAlerter(e.Request.Context(), app, e.Request.PathValue("id")); err != nil {
+			if err := pipeline.TestAlerter(e.Request.Context(), app, e.Request.PathValue("id"), e.Auth.Id); err != nil {
 				return e.BadRequestError("test alert failed", err)
 			}
 			return e.JSON(http.StatusOK, map[string]bool{"ok": true})
@@ -127,6 +140,38 @@ func main() {
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// adminCmd grants or revokes admin (managing the shared sources and
+// invites). It is a CLI command because no API path may set the flag.
+func adminCmd(app *pocketbase.PocketBase) *cobra.Command {
+	var revoke bool
+	cmd := &cobra.Command{
+		Use:          "admin <email>",
+		Short:        "Make a user an admin (or --revoke)",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := app.Bootstrap(); err != nil {
+				return err
+			}
+			if err := app.RunAllMigrations(); err != nil {
+				return err
+			}
+			user, err := app.FindAuthRecordByEmail("users", args[0])
+			if err != nil {
+				return fmt.Errorf("user %q: %w", args[0], err)
+			}
+			user.Set("admin", !revoke)
+			if err := app.SaveNoValidate(user); err != nil {
+				return err
+			}
+			fmt.Printf("%s admin=%v\n", args[0], !revoke)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&revoke, "revoke", false, "remove admin instead")
+	return cmd
 }
 
 // mcpTokenCmd mints a long-lived, non-refreshable auth token for a user, for

@@ -168,6 +168,14 @@ a.item-title:hover { color: var(--accent); }
 }
 @keyframes shimmer { from { background-position: 120% 0; } to { background-position: -20% 0; } }
 
+/* Plugin config forms: short fields flow side by side, URLs take a row. */
+.cfg-grid {
+  display: grid; gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  align-items: end;
+}
+.cfg-wide { grid-column: 1 / -1; }
+
 /* ----------------------------------------------------------- responsive -- */
 
 @media (max-width: 820px) {

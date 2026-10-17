@@ -6,10 +6,13 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
 	"github.com/mmcdole/gofeed"
 	"github.com/pocketbase/pocketbase/core"
 
-	"gitlab.mauza.net/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/plugin"
 )
 
 type rssConfig struct {
@@ -89,12 +92,25 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// truncate cuts s to at most n bytes without splitting a UTF-8 sequence.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
 	return s[:n]
 }
+
 func init() {
-	Register("rss", rssSource{})
+	Register(plugin.Info{
+		Type:        "rss",
+		Label:       "RSS feed",
+		Description: "Any RSS, Atom or RDF feed: Craigslist searches, KSL alerts, classifieds. Price is read from a $ amount in the title.",
+		Fields: []plugin.Field{
+			{Key: "url", Label: "Feed URL", Type: plugin.URL, Required: true, Hint: "RSS or Atom",
+				Placeholder: "https://saltlakecity.craigslist.org/search/cta?format=rss"},
+		},
+	}, rssSource{})
 }

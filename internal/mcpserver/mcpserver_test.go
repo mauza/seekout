@@ -12,7 +12,8 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
-	_ "gitlab.mauza.net/mauza/seekout/migrations"
+	"github.com/mauza/seekout/internal/hooks"
+	_ "github.com/mauza/seekout/migrations"
 )
 
 // bearer adds a fixed Authorization header, the way Hermes's headers config does.
@@ -31,6 +32,10 @@ func newApp(t *testing.T) *tests.TestApp {
 		t.Fatal(err)
 	}
 	t.Cleanup(app.Cleanup)
+	hooks.Bind(app)
+	if err := hooks.SyncSelects(app); err != nil {
+		t.Fatal(err)
+	}
 	return app
 }
 
@@ -106,7 +111,8 @@ func TestMCP(t *testing.T) {
 	_, unverifiedToken := newUser(t, app, "eve@example.test", false)
 
 	src := save(t, app, "sources", map[string]any{
-		"name": "test-feed", "type": "rss", "kind": "home", "interval_minutes": 30, "enabled": true,
+		"name": "test-feed", "type": "rss", "kind": "home", "config": map[string]any{"url": "https://example.test/feed"},
+		"interval_minutes": 30, "enabled": true,
 	})
 	for _, l := range []struct {
 		id    string
@@ -118,8 +124,8 @@ func TestMCP(t *testing.T) {
 			"price": l.price, "attrs": map[string]any{"beds": l.beds},
 		})
 	}
-	aliceAlerter := save(t, app, "alerters", map[string]any{"user": alice.Id, "name": "a", "type": "ntfy", "enabled": true})
-	bobAlerter := save(t, app, "alerters", map[string]any{"user": bob.Id, "name": "b", "type": "ntfy", "enabled": true})
+	aliceAlerter := save(t, app, "alerters", map[string]any{"user": alice.Id, "name": "a", "type": "ntfy", "config": map[string]any{"topic": "a"}, "enabled": true})
+	bobAlerter := save(t, app, "alerters", map[string]any{"user": bob.Id, "name": "b", "type": "ntfy", "config": map[string]any{"topic": "b"}, "enabled": true})
 
 	t.Run("rejects missing, bad and unverified tokens", func(t *testing.T) {
 		for _, tok := range []string{"", "not-a-jwt", unverifiedToken} {
@@ -222,6 +228,21 @@ func TestMCP(t *testing.T) {
 		}
 		if _, err := app.FindRecordById("seekers", seeker.ID); err == nil {
 			t.Fatal("seeker still exists")
+		}
+	})
+
+	t.Run("only admins add sources", func(t *testing.T) {
+		args := map[string]any{"name": "n", "type": "rss", "kind": "home", "config": map[string]any{"url": "https://example.test/f"}}
+		if msg := call(t, as, "create_source", args, nil); !strings.Contains(msg, "only admins") {
+			t.Fatalf("non-admin create_source: got %q, want refused", msg)
+		}
+		alice.Set("admin", true)
+		if err := app.Save(alice); err != nil {
+			t.Fatal(err)
+		}
+		var src Source
+		if msg := call(t, as, "create_source", args, &src); msg != "" || src.ID == "" {
+			t.Fatalf("admin create_source: %q %+v", msg, src)
 		}
 	})
 }

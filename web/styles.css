@@ -293,6 +293,7 @@ select {
 }
 .modal {
   width: min(620px, 100%);
+  min-width: 0; /* a grid item otherwise grows to fit its widest row */
   background: var(--surface);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-xl);
@@ -307,7 +308,7 @@ select {
 .modal header h2 { font-size: 1.1rem; }
 .modal .body { padding: 1.3rem; display: grid; gap: 0.9rem; }
 .modal footer {
-  display: flex; justify-content: flex-end; gap: 0.6rem;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.6rem;
   padding: 1rem 1.3rem;
   border-top: 1px solid var(--line);
 }

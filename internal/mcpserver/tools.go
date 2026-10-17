@@ -12,8 +12,9 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
-	"gitlab.mauza.net/mauza/seekout/internal/match"
-	"gitlab.mauza.net/mauza/seekout/internal/pipeline"
+	"github.com/mauza/seekout/internal/match"
+	"github.com/mauza/seekout/internal/pipeline"
+	"github.com/mauza/seekout/internal/sources"
 )
 
 const (
@@ -120,14 +121,14 @@ type idArg struct {
 
 type createSourceArgs struct {
 	Name            string         `json:"name"`
-	Type            string         `json:"type" jsonschema:"rss or ure (utahrealestate.com)"`
-	Kind            string         `json:"kind" jsonschema:"home, car, classified or other"`
-	Config          map[string]any `json:"config" jsonschema:"rss: {\"url\": feed URL}; ure: {\"type\": residential|multi_unit|land|commercial|farm|rental, \"pages\": 1-N}"`
+	Type            string         `json:"type" jsonschema:"a source type from this tool's description"`
+	Kind            string         `json:"kind" jsonschema:"a listing kind (see the server instructions)"`
+	Config          map[string]any `json:"config" jsonschema:"the type's config, as listed in this tool's description"`
 	IntervalMinutes int            `json:"interval_minutes,omitempty" jsonschema:"poll interval, default 30"`
 }
 
 type searchListingsArgs struct {
-	Kind       string            `json:"kind,omitempty" jsonschema:"home, car, classified or other"`
+	Kind       string            `json:"kind,omitempty" jsonschema:"a listing kind"`
 	SourceID   string            `json:"source_id,omitempty"`
 	Since      string            `json:"since,omitempty" jsonschema:"RFC 3339 time; only listings stored at or after it"`
 	Conditions []match.Condition `json:"conditions,omitempty" jsonschema:"AND-ed {field, op, value} conditions, same as a seeker's"`
@@ -136,7 +137,7 @@ type searchListingsArgs struct {
 
 type createSeekerArgs struct {
 	Name       string            `json:"name"`
-	Kind       string            `json:"kind,omitempty" jsonschema:"any (default), home, car, classified or other"`
+	Kind       string            `json:"kind,omitempty" jsonschema:"any (default) or a listing kind"`
 	SourceIDs  []string          `json:"source_ids,omitempty" jsonschema:"restrict to these sources; empty means all"`
 	Conditions []match.Condition `json:"conditions,omitempty" jsonschema:"AND-ed {field, op, value}; empty matches every listing"`
 	AlerterIDs []string          `json:"alerter_ids,omitempty" jsonschema:"alerters to notify on a match"`
@@ -184,11 +185,20 @@ func registerTools(s *mcp.Server, app core.App) {
 			return nil, out, nil
 		})
 
+	typeDocs := []string{}
+	for _, in := range sources.Infos() {
+		typeDocs = append(typeDocs, in.Doc()+" — "+in.Description)
+	}
 	mcp.AddTool(s, &mcp.Tool{Name: "create_source",
-		Description: "Add a listing source. Its first poll only ingests the existing backlog; alerts start with listings that appear after that."},
+		Description: "Add a listing source (admins only: sources are shared by every user). Its first poll only ingests the existing backlog; alerts start with listings that appear after that. Types:\n- " + strings.Join(typeDocs, "\n- ")},
 		func(ctx context.Context, req *mcp.CallToolRequest, in createSourceArgs) (*mcp.CallToolResult, Source, error) {
-			if _, err := userID(req); err != nil {
+			uid, err := userID(req)
+			if err != nil {
 				return nil, Source{}, err
+			}
+			// Mirrors the sources create rule, which server-side saves skip.
+			if user, err := app.FindRecordById("users", uid); err != nil || !user.GetBool("admin") {
+				return nil, Source{}, errors.New("only admins can add sources; sources are shared by every user")
 			}
 			col, err := app.FindCollectionByNameOrId("sources")
 			if err != nil {
@@ -329,7 +339,7 @@ func registerTools(s *mcp.Server, app core.App) {
 			if in.Kind != "" {
 				upd.Kind = &in.Kind
 			}
-			if err := applySeeker(app, uid, rec, upd); err != nil {
+			if err := applySeeker(app, rec, upd); err != nil {
 				return nil, Seeker{}, err
 			}
 			return nil, toSeeker(rec), nil
@@ -346,7 +356,7 @@ func registerTools(s *mcp.Server, app core.App) {
 			if err != nil {
 				return nil, Seeker{}, err
 			}
-			if err := applySeeker(app, uid, rec, in); err != nil {
+			if err := applySeeker(app, rec, in); err != nil {
 				return nil, Seeker{}, err
 			}
 			return nil, toSeeker(rec), nil
@@ -397,10 +407,7 @@ func registerTools(s *mcp.Server, app core.App) {
 			if err != nil {
 				return nil, okOut{}, err
 			}
-			if _, err := ownRecord(app, "alerters", in.ID, uid); err != nil {
-				return nil, okOut{}, err
-			}
-			if err := pipeline.TestAlerter(ctx, app, in.ID); err != nil {
+			if err := pipeline.TestAlerter(ctx, app, in.ID, uid); err != nil {
 				return nil, okOut{}, err
 			}
 			return nil, okOut{OK: true}, nil
@@ -442,11 +449,10 @@ func registerTools(s *mcp.Server, app core.App) {
 		})
 }
 
-// applySeeker validates and saves the set fields of upd onto rec. Alerters
-// must belong to the caller: PocketBase's relation check only proves they
-// exist, and the collection rules that would stop a cross-user reference
-// don't run for server-side saves.
-func applySeeker(app core.App, uid string, rec *core.Record, upd updateSeekerArgs) error {
+// applySeeker saves the set fields of upd onto rec. The seekers validate
+// hook (internal/hooks) checks the conditions and that every alerter
+// belongs to the seeker's user.
+func applySeeker(app core.App, rec *core.Record, upd updateSeekerArgs) error {
 	if upd.Name != nil {
 		rec.Set("name", *upd.Name)
 	}
@@ -457,17 +463,9 @@ func applySeeker(app core.App, uid string, rec *core.Record, upd updateSeekerArg
 		rec.Set("sources", *upd.SourceIDs)
 	}
 	if upd.Conditions != nil {
-		if err := match.Validate(*upd.Conditions); err != nil {
-			return err
-		}
 		rec.Set("conditions", *upd.Conditions)
 	}
 	if upd.AlerterIDs != nil {
-		for _, id := range *upd.AlerterIDs {
-			if _, err := ownRecord(app, "alerters", id, uid); err != nil {
-				return err
-			}
-		}
 		rec.Set("alerters", *upd.AlerterIDs)
 	}
 	if upd.Enabled != nil {

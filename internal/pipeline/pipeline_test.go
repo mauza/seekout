@@ -9,20 +9,45 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
-	"gitlab.mauza.net/mauza/seekout/internal/listing"
-	"gitlab.mauza.net/mauza/seekout/internal/sources"
-	_ "gitlab.mauza.net/mauza/seekout/migrations"
+	"github.com/mauza/seekout/internal/hooks"
+	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/plugin"
+	"github.com/mauza/seekout/internal/sources"
+	_ "github.com/mauza/seekout/migrations"
 )
 
 // enrichingSource returns fixed listings and fails Enrich for ids in failing.
+// onPoll, when set, runs inside Poll (to act mid-poll).
 type enrichingSource struct {
 	listings []listing.Listing
 	failing  map[string]bool
 	enriched []string
+	onPoll   func()
 }
 
 func (s *enrichingSource) Poll(context.Context, *core.Record) ([]listing.Listing, error) {
+	if s.onPoll != nil {
+		s.onPoll()
+	}
 	return s.listings, nil
+}
+
+// newApp is a test app wired like production (validate hooks, select
+// sync) with fake registered as source type "fake": a new type needs no
+// migration, so this also proves registration alone is enough.
+func newApp(t *testing.T, fake sources.Source) *tests.TestApp {
+	t.Helper()
+	sources.Register(plugin.Info{Type: "fake", Label: "Fake"}, fake)
+	app, err := tests.NewTestApp(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(app.Cleanup)
+	hooks.Bind(app)
+	if err := hooks.SyncSelects(app); err != nil {
+		t.Fatal(err)
+	}
+	return app
 }
 
 func (s *enrichingSource) Enrich(_ context.Context, _ *core.Record, l *listing.Listing) error {
@@ -54,12 +79,6 @@ func save(t *testing.T, app core.App, collection string, fields map[string]any) 
 // it; the failure shows on the source; enrichment runs only for listings
 // not stored yet; and enriched attrs are what seekers match on.
 func TestPollEnrichment(t *testing.T) {
-	app, err := tests.NewTestApp(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-
 	fake := &enrichingSource{
 		listings: []listing.Listing{
 			{ExternalID: "a", Title: "a", Attrs: map[string]any{}},
@@ -67,13 +86,11 @@ func TestPollEnrichment(t *testing.T) {
 		},
 		failing: map[string]bool{"b": true},
 	}
-	// The sources.type select only admits registered names, so the fake
-	// stands in for "rss" in this test binary.
-	sources.Register("rss", fake)
+	app := newApp(t, fake)
 
 	user := save(t, app, "users", map[string]any{"email": "u@example.test", "password": "password123"})
 	src := save(t, app, "sources", map[string]any{
-		"name": "fake", "type": "rss", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
+		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
 	})
 	seeker := save(t, app, "seekers", map[string]any{
 		"user": user.Id, "name": "3-car", "kind": "any", "enabled": true,
@@ -118,17 +135,12 @@ func TestPollEnrichment(t *testing.T) {
 
 // A soft seeker's alert says what traded off.
 func TestSoftSeekerAlertExplains(t *testing.T) {
-	app, err := tests.NewTestApp(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer app.Cleanup()
-	sources.Register("rss", &enrichingSource{listings: []listing.Listing{
+	app := newApp(t, &enrichingSource{listings: []listing.Listing{
 		{ExternalID: "x", Title: "12 Main St Lehi, UT", Price: 700000, Attrs: map[string]any{"lot_acres": 0.4}},
 	}})
 	user := save(t, app, "users", map[string]any{"email": "u@example.test", "password": "password123"})
 	src := save(t, app, "sources", map[string]any{
-		"name": "fake", "type": "rss", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
+		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
 	})
 	save(t, app, "seekers", map[string]any{
 		"user": user.Id, "name": "soft", "kind": "any", "enabled": true,
@@ -149,5 +161,102 @@ func TestSoftSeekerAlertExplains(t *testing.T) {
 	want := "12 Main St Lehi, UT — $700000\nscore +0.00: garage_capacity 3 (-0.50 x2), lot_acres 0.4 (+1.00)"
 	if got := alert.GetString("body"); got != want {
 		t.Errorf("body = %q\nwant   %q", got, want)
+	}
+}
+
+// A poll writes its bookkeeping onto the source as it is now, not as it was
+// loaded: pausing a source mid-poll must stick.
+func TestPollKeepsEditsMadeDuringPoll(t *testing.T) {
+	fake := &enrichingSource{}
+	app := newApp(t, fake)
+	src := save(t, app, "sources", map[string]any{
+		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true,
+	})
+	fake.onPoll = func() {
+		live, err := app.FindRecordById("sources", src.Id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		live.Set("enabled", false)
+		live.Set("name", "renamed")
+		if err := app.Save(live); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := PollSource(context.Background(), app, src); err != nil {
+		t.Fatal(err)
+	}
+	got, err := app.FindRecordById("sources", src.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetBool("enabled") || got.GetString("name") != "renamed" {
+		t.Errorf("edit made during the poll was reverted: enabled=%v name=%q", got.GetBool("enabled"), got.GetString("name"))
+	}
+	if got.GetDateTime("last_polled").IsZero() || !got.GetBool("seeded") {
+		t.Errorf("poll bookkeeping not saved: last_polled=%v seeded=%v", got.GetDateTime("last_polled"), got.GetBool("seeded"))
+	}
+}
+
+// The cron doesn't wait for the previous tick, so a slow poll must not be
+// started again on top of itself.
+func TestPollSourceBusy(t *testing.T) {
+	release, inPoll := make(chan struct{}), make(chan struct{})
+	fake := &enrichingSource{onPoll: func() { close(inPoll); <-release }}
+	app := newApp(t, fake)
+	src := save(t, app, "sources", map[string]any{
+		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true,
+	})
+	done := make(chan error)
+	go func() {
+		_, err := PollSource(context.Background(), app, src)
+		done <- err
+	}()
+	<-inPoll
+	if _, err := PollSource(context.Background(), app, src); !errors.Is(err, ErrBusy) {
+		t.Errorf("second concurrent poll: err = %v, want ErrBusy", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("first poll: %v", err)
+	}
+	fake.onPoll = nil
+	if _, err := PollSource(context.Background(), app, src); err != nil {
+		t.Errorf("poll after the first finished: %v", err)
+	}
+}
+
+// A seeker saved before the ownership hook existed can still reference
+// another user's alerter; delivery must refuse it.
+func TestAlertSkipsAnotherUsersAlerter(t *testing.T) {
+	app := newApp(t, &enrichingSource{listings: []listing.Listing{{ExternalID: "x", Title: "x", Attrs: map[string]any{}}}})
+	alice := save(t, app, "users", map[string]any{"email": "a@example.test", "password": "password123"})
+	bob := save(t, app, "users", map[string]any{"email": "b@example.test", "password": "password123"})
+	bobs := save(t, app, "alerters", map[string]any{
+		"user": bob.Id, "name": "bob", "type": "webhook", "config": map[string]any{"url": "http://127.0.0.1:1/"}, "enabled": true,
+	})
+	src := save(t, app, "sources", map[string]any{
+		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
+	})
+	col, _ := app.FindCollectionByNameOrId("seekers")
+	seeker := core.NewRecord(col)
+	seeker.Load(map[string]any{"user": alice.Id, "name": "legacy", "kind": "any", "enabled": true, "alerters": []string{bobs.Id}})
+	if err := app.Save(seeker); err == nil {
+		t.Fatal("validate hook accepted another user's alerter")
+	}
+	if err := app.SaveNoValidate(seeker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PollSource(context.Background(), app, src); err != nil {
+		t.Fatal(err)
+	}
+	alert, err := app.FindFirstRecordByData("alerts", "seeker", seeker.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var delivered []map[string]any
+	_ = alert.UnmarshalJSONField("delivered", &delivered)
+	if len(delivered) != 1 || delivered[0]["ok"] != false || delivered[0]["error"] != "alerter belongs to another user" {
+		t.Errorf("delivered = %v, want a refusal", delivered)
 	}
 }

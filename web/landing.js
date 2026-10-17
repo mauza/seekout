@@ -29,6 +29,8 @@ function setMode(next) {
   $("auth-toggle").textContent = signup ? "Have an account? Sign in" : "Need an account? Sign up";
   $("auth-confirm-field").hidden = !signup;
   $("auth-confirm").required = signup;
+  $("auth-invite-field").hidden = !signup;
+  $("auth-invite").required = signup;
   $("auth-password").autocomplete = signup ? "new-password" : "current-password";
   $("auth-error").textContent = "";
   showForm();
@@ -45,7 +47,7 @@ function showSent(email, justSent) {
     : "This address is not verified yet. Check the link we emailed";
   $("auth-sent").hidden = false;
   $("auth-error").textContent = "";
-  for (const id of ["auth-email-field", "auth-password-field", "auth-confirm-field"]) {
+  for (const id of ["auth-invite-field", "auth-email-field", "auth-password-field", "auth-confirm-field"]) {
     $(id).hidden = true;
   }
   $("auth-submit").hidden = true;
@@ -127,10 +129,13 @@ $("auth-form").addEventListener("submit", async (e) => {
       if (password !== $("auth-confirm").value) {
         throw new Error("Passwords do not match.");
       }
+      // The invite isn't a users field: a server hook claims it as part of
+      // the create (internal/hooks/invites.go).
       await pb.collection("users").create({
         email,
         password,
         passwordConfirm: $("auth-confirm").value,
+        invite: $("auth-invite").value.trim(),
       });
       // Accounts cannot authenticate until the address is confirmed, so
       // there is no session to hand off yet — ask for the email instead.
@@ -153,6 +158,13 @@ $("auth-form").addEventListener("submit", async (e) => {
     submit.disabled = false;
   }
 });
+
+// An invite link (/?invite=CODE) fills in the code and opens signup.
+const inviteParam = new URLSearchParams(location.search).get("invite");
+if (inviteParam) {
+  $("auth-invite").value = inviteParam;
+  if (!pb.authStore.isValid) openAuth("signup");
+}
 
 // Already signed in? Offer the app instead of making them log in again.
 (async () => {

@@ -6,7 +6,8 @@
 // server-side, so PocketBase's collection API rules do NOT apply here: every
 // tool scopes reads and writes to the token's user itself, mirroring the
 // rules in migrations/ (sources and listings are shared between signed-in
-// users; seekers, alerters and alerts are per-user).
+// users and only admins change sources; seekers, alerters and alerts are
+// per-user).
 package mcpserver
 
 import (
@@ -14,12 +15,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/security"
+
+	"github.com/mauza/seekout/internal/listing"
 )
 
 // Handler returns the /mcp HTTP handler: bearer-token auth in front of a
@@ -27,7 +31,7 @@ import (
 // clients — there is no session to lose.
 func Handler(app core.App, version string) http.Handler {
 	server := mcp.NewServer(&mcp.Implementation{Name: "seekout", Version: version}, &mcp.ServerOptions{
-		Instructions: instructions,
+		Instructions: instructions + "\n- Listing kinds: " + strings.Join(listing.Kinds, ", ") + ".",
 	})
 	registerTools(server, app)
 
@@ -39,7 +43,7 @@ func Handler(app core.App, version string) http.Handler {
 }
 
 const instructions = `Seekout watches listing sources (RSS feeds, the Utah MLS) and alerts when a new listing matches a seeker.
-- A source is a shared poller; a listing is one item it produced (homes, cars, classifieds).
+- A source is a shared poller (only admins can add one); a listing is one item it produced (homes, cars, classifieds).
 - A seeker is the user's saved search: optional kind, optional source allow-list, conditions (hard ones must all hold; soft ones below), and the alerters to notify.
 - Conditions are {field, op, value}. field is a listing column (title, price, url, description, kind, published) or a dot path into the listing's attrs (e.g. beds, baths, sqft, city). op is one of = != > < >= <= in contains.
 - A condition can be soft: {"field":"garage_capacity","op":">=","value":3,"soft":true,"floor":2,"best":4,"weight":2}. Soft conditions trade off instead of each having to hold: each scores 0 at value (the target), up to +1 at best, down to -1 at floor (missing values score -1), and past floor the listing fails. A listing matches when all hard conditions hold and the weighted soft scores sum to >= 0, so a shortfall on one must be paid for by others. Only > >= < <= can be soft.

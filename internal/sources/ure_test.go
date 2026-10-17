@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gitlab.mauza.net/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/listing"
 )
 
 // One page of cards, trimmed from a live map.inline.results response to the
@@ -292,5 +292,15 @@ func TestUreEnrichOffMarket(t *testing.T) {
 	l = listing.Listing{ExternalID: "2191732", URL: srv.URL + "/2191732", Attrs: map[string]any{}}
 	if err := (ureSource{}).Enrich(context.Background(), nil, &l); err != nil || l.Attrs["garage_capacity"] != 3 {
 		t.Fatalf("detail page: err = %v, attrs = %v", err, l.Attrs)
+	}
+}
+
+func TestTruncateKeepsUTF8(t *testing.T) {
+	// "é" is two bytes; cutting at 2 must not leave half of it.
+	if got := truncate("aé", 2); got != "a" {
+		t.Errorf("truncate = %q, want %q", got, "a")
+	}
+	if got := truncate("abc", 5); got != "abc" {
+		t.Errorf("truncate = %q, want unchanged", got)
 	}
 }

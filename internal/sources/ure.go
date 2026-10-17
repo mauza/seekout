@@ -14,7 +14,8 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
-	"gitlab.mauza.net/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/plugin"
 )
 
 // ureSource polls utahrealestate.com, the public search over the Utah MLS.
@@ -41,6 +42,13 @@ type ureConfig struct {
 }
 
 const ureBase = "https://www.utahrealestate.com"
+
+// ureTransport is shared by every poll and detail fetch so connections are
+// reused and idle ones time out; a Transport per request leaks them.
+var ureTransport = http.DefaultTransport.(*http.Transport).Clone()
+
+// ureTypes is ureTypeCodes' keys in the order the form offers them.
+var ureTypes = []string{"residential", "multi_unit", "land", "commercial", "farm", "rental"}
 
 var ureTypeCodes = map[string]string{
 	"residential": "1",
@@ -97,11 +105,7 @@ func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing,
 	if err != nil {
 		return nil, fmt.Errorf("ure: cookie jar: %w", err)
 	}
-	client := &http.Client{
-		Timeout:   60 * time.Second,
-		Jar:       jar,
-		Transport: &http.Transport{Proxy: http.ProxyFromEnvironment},
-	}
+	client := &http.Client{Timeout: 60 * time.Second, Jar: jar, Transport: ureTransport}
 
 	// A fresh session per poll: the page GET establishes the default
 	// search state, so the poll is stateless and survives cookie expiry.
@@ -153,7 +157,7 @@ func (ureSource) Enrich(ctx context.Context, _ *core.Record, l *listing.Listing)
 	if l.URL == "" {
 		return fmt.Errorf("ure: no detail URL")
 	}
-	client := &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	client := &http.Client{Timeout: 60 * time.Second, Transport: ureTransport}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.URL, nil)
 	if err != nil {
 		return err
@@ -383,8 +387,7 @@ func ureUA(req *http.Request) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 }
 
-// maybeMatch returns the first regex match in s as a joined group-1
-// slice entry, or "".
+// maybeMatch returns re's first capture group in s, or "".
 func maybeMatch(re *regexp.Regexp, s string) string {
 	if m := re.FindStringSubmatch(s); m != nil && len(m) > 1 {
 		return m[1]
@@ -397,5 +400,14 @@ func normalizeSpace(s string) string {
 }
 
 func init() {
-	Register("ure", ureSource{})
+	Register(plugin.Info{
+		Type:        "ure",
+		Label:       "Utah MLS",
+		Description: "Newest listings for all of Utah from utahrealestate.com. New listings get garage, lot and HOA details from their detail page.",
+		Fields: []plugin.Field{
+			{Key: "type", Label: "Listing type", Type: plugin.Select, Options: ureTypes, Default: "residential"},
+			{Key: "pages", Label: "Pages", Type: plugin.Number, Default: 1, Min: plugin.Float(1), Max: plugin.Float(5),
+				Hint: "50 listings each"},
+		},
+	}, ureSource{})
 }

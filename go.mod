@@ -1,4 +1,4 @@
-module gitlab.mauza.net/mauza/seekout
+module github.com/mauza/seekout
 
 go 1.27
 

@@ -168,6 +168,8 @@ AUTH=$(api POST /api/collections/users/auth-with-password "" "{\"identity\":\"$E
 TOKEN=$(echo "$AUTH" | jqr .token)
 USER_ID=$(echo "$AUTH" | jqr .record.id)
 { [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; } && ok "webapp user auth" || bad "webapp user auth" "$AUTH"
+# Sources and invites are admin-only; grant with `seekout admin <email>`.
+check "webapp user is admin" "$(echo "$AUTH" | jqr .record.admin)" "true"
 
 check "wrong password rejected" "$(code POST /api/collections/users/auth-with-password "" "{\"identity\":\"$EMAIL\",\"password\":\"wrong-password\"}")" "400"
 # PocketBase list rules filter rather than deny, so the contract to verify is
@@ -189,9 +191,18 @@ check "users collection requires verified" \
 
 PENDING_EMAIL="test-pending-$(openssl rand -hex 4)@seekout.local"
 PENDING_PASS="pending-$(openssl rand -hex 6)"
+check "signup without an invite rejected" "$(code POST /api/collections/users/records "" \
+  "{\"email\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\",\"passwordConfirm\":\"$PENDING_PASS\"}")" "400"
+INVITE_ID_CODE=$(api POST /api/collections/invites/records "$TOKEN" '{"note":"test-prod-test"}' | jqr '.id + " " + .code')
+INVITE_ID=${INVITE_ID_CODE% *}
+INVITE_CODE=${INVITE_ID_CODE#* }
 PENDING_ID=$(api POST /api/collections/users/records "" \
-  "{\"email\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\",\"passwordConfirm\":\"$PENDING_PASS\"}" | jqr .id)
-{ [ -n "$PENDING_ID" ] && [ "$PENDING_ID" != "null" ]; } && ok "signup still open to anonymous" || bad "signup still open to anonymous"
+  "{\"email\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\",\"passwordConfirm\":\"$PENDING_PASS\",\"invite\":\"$INVITE_CODE\"}" | jqr .id)
+{ [ -n "$PENDING_ID" ] && [ "$PENDING_ID" != "null" ]; } && ok "signup with an invite" || bad "signup with an invite"
+check "invite works only once" "$(code POST /api/collections/users/records "" \
+  "{\"email\":\"x-$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\",\"passwordConfirm\":\"$PENDING_PASS\",\"invite\":\"$INVITE_CODE\"}")" "400"
+check "signup cannot claim admin" "$(api GET "/api/collections/users/records/$PENDING_ID" "$SU_TOKEN" | jqr .admin)" "false"
+api DELETE "/api/collections/invites/records/$INVITE_ID" "$TOKEN" >/dev/null
 
 check "unverified account cannot authenticate" \
   "$(code POST /api/collections/users/auth-with-password "" "{\"identity\":\"$PENDING_EMAIL\",\"password\":\"$PENDING_PASS\"}")" "403"
@@ -255,10 +266,10 @@ CREATED_ALERTERS+=("$HOOK_ID")
 check "ntfy test send" "$(code POST "/api/seekout/alerters/$NTFY_ID/test" "$TOKEN")" "200"
 check "webhook test send" "$(code POST "/api/seekout/alerters/$HOOK_ID/test" "$TOKEN")" "200"
 
-BROKEN_ID=$(api POST /api/collections/alerters/records "$TOKEN" \
-  "{\"user\":\"$USER_ID\",\"name\":\"test-broken\",\"type\":\"ntfy\",\"config\":{},\"enabled\":true}" | jqr .id)
-CREATED_ALERTERS+=("$BROKEN_ID")
-check "misconfigured alerter test fails" "$(code POST "/api/seekout/alerters/$BROKEN_ID/test" "$TOKEN")" "400"
+# Config is validated against the type's declared fields on save, so a
+# misconfigured alerter never gets stored.
+check "misconfigured alerter rejected" "$(code POST /api/collections/alerters/records "$TOKEN" \
+  "{\"user\":\"$USER_ID\",\"name\":\"test-broken\",\"type\":\"ntfy\",\"config\":{},\"enabled\":true}")" "400"
 
 sleep 3
 NTFY_MSG=$(curl -sS -m 20 "$NTFY/$NTFY_TOPIC/json?poll=1" | jqr 'select(.event=="message") | .title' | head -1)
@@ -398,7 +409,14 @@ check "user B sees no alerters of user A" "$(api GET /api/collections/alerters/r
 check "user B cannot read A's seeker"     "$(code GET "/api/collections/seekers/records/$S_ALL" "$B_TOKEN")" "404"
 check "user B cannot modify A's seeker"   "$(code PATCH "/api/collections/seekers/records/$S_ALL" "$B_TOKEN" '{"name":"hijacked"}')" "404"
 check "user B cannot delete A's alerter"  "$(code DELETE "/api/collections/alerters/records/$NTFY_ID" "$B_TOKEN")" "404"
+check "user B cannot test A's alerter"    "$(code POST "/api/seekout/alerters/$NTFY_ID/test" "$B_TOKEN")" "400"
+check "user B cannot attach A's alerter"  "$(code POST /api/collections/seekers/records "$B_TOKEN" \
+  "{\"user\":\"$USER_B_ID\",\"name\":\"test-sneaky\",\"kind\":\"any\",\"alerters\":[\"$NTFY_ID\"]}")" "400"
 check "listings are shared across users"  "$(api GET /api/collections/listings/records "$B_TOKEN" | jqr '.totalItems > 0')" "true"
+check "user B cannot create a source"     "$(code POST /api/collections/sources/records "$B_TOKEN" '{"name":"test-b","type":"rss","kind":"other","config":{"url":"https://example.com"},"interval_minutes":30}')" "400"
+check "user B cannot change a source"     "$(code PATCH "/api/collections/sources/records/$SRC" "$B_TOKEN" '{"enabled":false}')" "404"
+check "user B cannot make themself admin" "$(code PATCH "/api/collections/users/records/$USER_B_ID" "$B_TOKEN" '{"admin":true}')" "404"
+check "user B cannot list invites"        "$(api GET /api/collections/invites/records "$B_TOKEN" | jqr .totalItems)" "0"
 check "user B can see shared sources"     "$(code GET /api/collections/sources/records "$B_TOKEN")" "200"
 
 echo "=============== 9. cron ==============="

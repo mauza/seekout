@@ -12,7 +12,6 @@ pb.beforeSend = (url, options) => {
 const $ = (id) => document.getElementById(id);
 
 const OPS = ["=", "!=", ">", "<", ">=", "<=", "in", "contains"];
-const KINDS = ["home", "car", "classified", "other"];
 const LISTING_FIELDS = ["title", "price", "url", "kind", "description", "external_id", "published"];
 
 const state = {
@@ -25,6 +24,10 @@ const state = {
   unseen: 0,
   listingFilter: "",
   pollResults: {},
+  // Source and alerter types with their config fields, and the listing
+  // kinds, from /api/seekout/plugins: the forms below are built from it,
+  // so a type registered in Go shows up here with no UI change.
+  plugins: { sources: [], alerters: [], kinds: [] },
 };
 
 /* ------------------------------------------------------------- utilities -- */
@@ -173,14 +176,107 @@ function switchField(label, checked) {
 /* ------------------------------------------------------------------ data -- */
 
 async function loadAll() {
-  const [sources, alerters, seekers] = await Promise.all([
+  const [sources, alerters, seekers, plugins] = await Promise.all([
     pb.collection("sources").getFullList({ sort: "name" }),
     pb.collection("alerters").getFullList({ sort: "name" }),
     pb.collection("seekers").getFullList({ sort: "name" }),
+    state.plugins.kinds.length ? state.plugins : pb.send("/api/seekout/plugins", {}),
   ]);
   state.sources = sources;
   state.alerters = alerters;
   state.seekers = seekers;
+  state.plugins = plugins;
+}
+
+/* ---------------------------------------------------------- plugin forms -- */
+
+// Admins manage what every user shares: sources and invites. The API
+// enforces it; this only hides controls that would fail.
+const isAdmin = () => Boolean(pb.authStore.record?.admin);
+
+const pluginInfo = (group, type) => state.plugins[group].find((p) => p.type === type);
+
+// configForm renders one input per declared config field (internal/plugin)
+// for one type. Only the selected type's fields are in the DOM, so a
+// required input is never hidden (a hidden required control blocks submit
+// with nothing to focus).
+function configForm(info, config) {
+  const box = el(`<div class="stack"></div>`);
+  if (!info) return box;
+  if (info.description) box.append(el(`<p class="hint">${esc(info.description)}</p>`));
+  const grid = el(`<div class="cfg-grid"></div>`);
+  for (const f of info.fields) {
+    const v = config?.[f.key] ?? (f.type === "select" || f.type === "number" ? f.default ?? "" : "");
+    const hint = f.hint || (f.required ? "" : "optional");
+    const attrs = `data-cfg="${esc(f.key)}" ${f.required ? "required" : ""}`;
+    let input;
+    if (f.type === "select") {
+      input = `<select ${attrs}>${f.options.map((o) =>
+        `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select>`;
+    } else {
+      const type = { url: "url", number: "number" }[f.type] || "text";
+      const range = `${f.min != null ? `min="${f.min}"` : ""} ${f.max != null ? `max="${f.max}"` : ""}`;
+      input = `<input ${attrs} type="${type}" ${range} autocomplete="off" spellcheck="false"
+        placeholder="${esc(f.placeholder || "")}" value="${esc(v)}">`;
+    }
+    grid.append(el(`
+      <div class="field ${f.type === "url" ? "cfg-wide" : ""}">
+        <label>${esc(f.label)}${hint ? ` <span class="hint">${esc(hint)}</span>` : ""}</label>
+        ${input}
+      </div>`));
+  }
+  box.append(grid);
+  return box;
+}
+
+// readConfig returns base with the form's fields applied. Keys the form
+// doesn't offer (a webhook's headers, set over the API) are kept; a field
+// left blank is removed so the type's default applies.
+function readConfig(box, info, base) {
+  const out = { ...base };
+  for (const f of info?.fields || []) {
+    const raw = box.querySelector(`[data-cfg="${CSS.escape(f.key)}"]`).value.trim();
+    if (raw === "") delete out[f.key];
+    else out[f.key] = f.type === "number" ? Number(raw) : raw;
+  }
+  return out;
+}
+
+// configSummary is the one-line description on a source or alerter card.
+// Secrets are left out.
+function configSummary(info, config) {
+  if (!info) return "";
+  return info.fields
+    .filter((f) => f.type !== "secret")
+    .map((f) => {
+      const v = config?.[f.key] ?? f.default;
+      if (v === undefined || v === "") return "";
+      return f.type === "number" ? `${f.label.toLowerCase()} ${v}` : String(v);
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// typePicker builds the type picker plus the config section that follows
+// it, re-rendering the section when the type changes. Returns the picker
+// and a read() that gives the config to save.
+function typePicker(group, record) {
+  const infos = state.plugins[group];
+  const current = record?.type || infos[0]?.type;
+  const select = el(`<select name="type">${infos.map((p) =>
+    `<option value="${esc(p.type)}" ${p.type === current ? "selected" : ""}>${esc(p.type)} &mdash; ${esc(p.label)}</option>`).join("")}</select>`);
+  const section = el(`<div></div>`);
+  // Editing keeps the record's config (and keys the form doesn't offer)
+  // as long as the type stays the same.
+  const baseFor = (type) => (record && record.type === type ? record.config || {} : {});
+  const render = () => section.replaceChildren(configForm(pluginInfo(group, select.value), baseFor(select.value)));
+  select.addEventListener("change", render);
+  render();
+  return {
+    select,
+    section,
+    read: () => readConfig(section, pluginInfo(group, select.value), baseFor(select.value)),
+  };
 }
 
 async function loadAlerts() {
@@ -404,7 +500,7 @@ function seekerModal(seeker) {
         <label>Kind</label>
         <select name="kind">
           <option value="any" ${!seeker || seeker.kind === "any" ? "selected" : ""}>any kind</option>
-          ${KINDS.map((k) => `<option value="${k}" ${seeker?.kind === k ? "selected" : ""}>${k}</option>`).join("")}
+          ${state.plugins.kinds.map((k) => `<option value="${k}" ${seeker?.kind === k ? "selected" : ""}>${k}</option>`).join("")}
         </select>
       </div>
       <div class="field">
@@ -526,50 +622,24 @@ async function viewSeekers() {
 
 /* ---- sources ---- */
 
-const URE_TYPES = ["residential", "multi_unit", "land", "commercial", "farm", "rental"];
-
 function sourceModal(source) {
   const editing = Boolean(source);
-  const type = source?.type || "rss";
+  const picker = typePicker("sources", source);
   const body = el(`
     <div class="stack">
       <div class="field">
         <label>Name</label>
-        <input name="name" required placeholder="slc cars" value="${esc(source?.name || "")}">
+        <input name="name" type="text" required placeholder="slc cars" value="${esc(source?.name || "")}">
       </div>
-      <div class="field">
+      <div class="field" data-type>
         <label>Source type</label>
-        <select name="type">
-          <option value="rss" ${type === "rss" ? "selected" : ""}>rss &mdash; RSS or Atom feed</option>
-          <option value="ure" ${type === "ure" ? "selected" : ""}>ure &mdash; Utah MLS (utahrealestate.com)</option>
-        </select>
       </div>
-      <div data-rss-fields ${type === "rss" ? "" : "hidden"}>
-        <div class="field">
-          <label>Feed URL <span class="hint">RSS or Atom</span></label>
-          <input name="url" type="url" placeholder="https://saltlakecity.craigslist.org/search/cta?format=rss" value="${esc(source?.config?.url || "")}">
-        </div>
-      </div>
-      <div data-ure-fields ${type === "ure" ? "" : "hidden"}>
-        <div class="row" style="gap:.8rem;align-items:flex-end">
-          <div class="field grow">
-            <label>Listing type</label>
-            <select name="ure-type">
-              ${URE_TYPES.map((t) => `<option value="${t}" ${(source?.config?.type || "residential") === t ? "selected" : ""}>${t}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field grow">
-            <label>Pages <span class="hint">50 listings each, max 5</span></label>
-            <input name="ure-pages" type="number" min="1" max="5" value="${esc(source?.config?.pages || 1)}">
-          </div>
-        </div>
-        <p class="hint">Polls the MLS newest-listings search for all of Utah.</p>
-      </div>
+      <div data-config></div>
       <div class="row" style="gap:.8rem;align-items:flex-end">
         <div class="field grow">
           <label>Kind</label>
           <select name="kind">
-            ${KINDS.map((k) => `<option value="${k}" ${source?.kind === k ? "selected" : ""}>${k}</option>`).join("")}
+            ${state.plugins.kinds.map((k) => `<option value="${k}" ${source?.kind === k ? "selected" : ""}>${k}</option>`).join("")}
           </select>
         </div>
         <div class="field grow">
@@ -579,43 +649,22 @@ function sourceModal(source) {
       </div>
       <p class="hint">The first poll of a new source stores its backlog quietly &mdash; alerts start with the next one.</p>
     </div>`);
+  body.querySelector("[data-type]").append(picker.select);
+  body.querySelector("[data-config]").replaceWith(picker.section);
 
   const enabled = switchField("enabled", source ? source.enabled : true);
   body.append(enabled);
-
-  const rssFields = body.querySelector("[data-rss-fields]");
-  const ureFields = body.querySelector("[data-ure-fields]");
-  const typeSelect = body.querySelector('[name="type"]');
-  const urlInput = body.querySelector('[name="url"]');
-
-  // The feed URL input stays in the DOM while ure is selected, and a hidden
-  // required control fails constraint validation with nothing focusable to
-  // report against - the browser then blocks submit silently. So required
-  // has to track visibility, not sit in the markup.
-  const syncType = (t) => {
-    const rss = t === "rss";
-    rssFields.hidden = !rss;
-    ureFields.hidden = rss;
-    urlInput.required = rss;
-  };
-  syncType(type);
-  typeSelect.addEventListener("change", () => syncType(typeSelect.value));
 
   openModal({
     title: editing ? "Edit source" : "New source",
     body,
     submitLabel: editing ? "Save changes" : "Create source",
     onSubmit: async () => {
-      const t = typeSelect.value;
-      const config =
-        t === "ure"
-          ? { type: body.querySelector('[name="ure-type"]').value, pages: Number(body.querySelector('[name="ure-pages"]').value) || 1 }
-          : { url: urlInput.value.trim() };
       const data = {
         name: body.querySelector('[name="name"]').value.trim(),
-        type: t,
+        type: picker.select.value,
         kind: body.querySelector('[name="kind"]').value,
-        config,
+        config: picker.read(),
         interval_minutes: Number(body.querySelector('[name="interval"]').value),
         enabled: enabled.querySelector("input").checked,
       };
@@ -628,22 +677,22 @@ function sourceModal(source) {
   });
 }
 
-const sourceMeta = (s) =>
-  s.type === "ure"
-    ? `utahrealestate.com · ${s.config?.type || "residential"} · ${s.config?.pages || 1} pages`
-    : s.config?.url || "";
+const sourceMeta = (s) => configSummary(pluginInfo("sources", s.type), s.config);
 
 async function viewSources() {
+  const admin = isAdmin();
   const add = el(`<button class="btn btn-primary">+ New source</button>`);
   add.addEventListener("click", () => sourceModal(null));
-  setHead("Sources", "Feeds seekout polls for new listings", [add]);
+  setHead("Sources", admin ? "Feeds seekout polls for new listings" : "Feeds seekout polls for new listings (shared; an admin manages them)",
+    admin ? [add] : []);
 
   const box = el(`<div class="view-inner"></div>`);
   if (!state.sources.length) {
     const cta = el(`<button class="btn btn-primary">+ New source</button>`);
     cta.addEventListener("click", () => sourceModal(null));
-    box.append(emptyState(ICON_FEED, "No sources yet",
-      "Add an RSS or Atom feed, or the Utah MLS source — anything that lists things.", cta));
+    box.append(emptyState(ICON_FEED, "No sources yet", admin
+      ? "Add an RSS or Atom feed, or the Utah MLS source — anything that lists things."
+      : "Sources are shared, and an admin adds them.", admin ? cta : undefined));
     $("view").replaceChildren(box);
     return;
   }
@@ -669,8 +718,8 @@ async function viewSources() {
           <div class="item-actions">
             <span class="small muted" data-status>${esc(state.pollResults[s.id] || "")}</span>
             <button class="btn btn-sm" data-poll>Poll now</button>
-            <button class="btn btn-sm" data-edit>Edit</button>
-            <button class="btn btn-sm btn-danger" data-del>Delete</button>
+            ${admin ? `<button class="btn btn-sm" data-edit>Edit</button>
+            <button class="btn btn-sm btn-danger" data-del>Delete</button>` : ""}
           </div>
           ${s.last_error ? `<div class="item-note error-note">
             <svg viewBox="0 0 24 24" width="15" height="15" style="flex:none"><path d="M12 8v5m0 3.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
@@ -704,8 +753,8 @@ async function viewSources() {
       }
     });
 
-    card.querySelector("[data-edit]").addEventListener("click", () => sourceModal(s));
-    card.querySelector("[data-del]").addEventListener("click", async () => {
+    card.querySelector("[data-edit]")?.addEventListener("click", () => sourceModal(s));
+    card.querySelector("[data-del]")?.addEventListener("click", async () => {
       if (!(await confirmDialog("Delete source", `Delete "${s.name}"? Its listings and their alerts go with it.`))) return;
       try {
         await pb.collection("sources").delete(s.id);
@@ -774,59 +823,19 @@ async function viewListings() {
 
 function alerterModal(alerter) {
   const editing = Boolean(alerter);
-  const cfg = alerter?.config || {};
-  const type = alerter?.type || "ntfy";
-
+  const picker = typePicker("alerters", alerter);
   const body = el(`
     <div class="stack">
       <div class="field">
         <label>Name</label>
-        <input name="name" required placeholder="my phone" value="${esc(alerter?.name || "")}">
+        <input name="name" type="text" required placeholder="my phone" value="${esc(alerter?.name || "")}">
       </div>
-      <div class="field">
+      <div class="field" data-type>
         <label>Type</label>
-        <select name="type">
-          <option value="ntfy" ${type === "ntfy" ? "selected" : ""}>ntfy — push to phone/desktop</option>
-          <option value="webhook" ${type === "webhook" ? "selected" : ""}>webhook — Slack or any JSON endpoint</option>
-        </select>
-      </div>
-      <div data-ntfy class="stack">
-        <div class="field">
-          <label>Server <span class="hint">defaults to https://ntfy.sh</span></label>
-          <input name="ntfy-url" type="url" placeholder="https://ntfy.sh" value="${esc(cfg.url || "")}">
-        </div>
-        <div class="field">
-          <label>Topic</label>
-          <input name="ntfy-topic" placeholder="pick-something-unguessable" value="${esc(cfg.topic || "")}">
-        </div>
-        <div class="row" style="gap:.8rem;align-items:flex-end">
-          <div class="field grow">
-            <label>Token <span class="hint">optional</span></label>
-            <input name="ntfy-token" value="${esc(cfg.token || "")}">
-          </div>
-          <div class="field grow">
-            <label>Priority <span class="hint">1–5</span></label>
-            <input name="ntfy-priority" value="${esc(cfg.priority || "")}">
-          </div>
-          <div class="field grow">
-            <label>Tags <span class="hint">comma separated</span></label>
-            <input name="ntfy-tags" placeholder="house" value="${esc(cfg.tags || "")}">
-          </div>
-        </div>
-      </div>
-      <div data-webhook class="field" hidden>
-        <label>Webhook URL</label>
-        <input name="hook-url" type="url" placeholder="https://hooks.slack.com/services/..." value="${esc(type === "webhook" ? cfg.url || "" : "")}">
       </div>
     </div>`);
-
-  const typeSel = body.querySelector('[name="type"]');
-  const sync = () => {
-    body.querySelector("[data-ntfy]").hidden = typeSel.value !== "ntfy";
-    body.querySelector("[data-webhook]").hidden = typeSel.value !== "webhook";
-  };
-  typeSel.addEventListener("change", sync);
-  sync();
+  body.querySelector("[data-type]").append(picker.select);
+  body.append(picker.section);
 
   const enabled = switchField("enabled", alerter ? alerter.enabled : true);
   body.append(enabled);
@@ -836,22 +845,11 @@ function alerterModal(alerter) {
     body,
     submitLabel: editing ? "Save changes" : "Create alerter",
     onSubmit: async () => {
-      const kind = typeSel.value;
-      const config = kind === "ntfy"
-        ? {
-            url: body.querySelector('[name="ntfy-url"]').value.trim(),
-            topic: body.querySelector('[name="ntfy-topic"]').value.trim(),
-            token: body.querySelector('[name="ntfy-token"]').value.trim(),
-            priority: body.querySelector('[name="ntfy-priority"]').value.trim(),
-            tags: body.querySelector('[name="ntfy-tags"]').value.trim(),
-          }
-        : { url: body.querySelector('[name="hook-url"]').value.trim() };
-
       const data = {
         user: pb.authStore.record.id,
         name: body.querySelector('[name="name"]').value.trim(),
-        type: kind,
-        config,
+        type: picker.select.value,
+        config: picker.read(),
         enabled: enabled.querySelector("input").checked,
       };
       if (editing) await pb.collection("alerters").update(alerter.id, data);
@@ -879,9 +877,7 @@ async function viewAlerters() {
   }
 
   for (const a of state.alerters) {
-    const target = a.type === "ntfy"
-      ? `${(a.config?.url || "https://ntfy.sh").replace(/\/$/, "")}/${a.config?.topic || "?"}`
-      : a.config?.url || "";
+    const target = configSummary(pluginInfo("alerters", a.type), a.config);
     const card = el(`
       <article class="card card-hover">
         <div class="item">
@@ -936,6 +932,94 @@ async function viewAlerters() {
   $("view").replaceChildren(box);
 }
 
+/* ---- invites (admins) ---- */
+
+const inviteLink = (code) => `${location.origin}/?invite=${encodeURIComponent(code)}`;
+
+async function copyText(text, what) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copied`, "ok");
+  } catch {
+    toast(text);
+  }
+}
+
+function inviteModal() {
+  const body = el(`
+    <div class="stack">
+      <div class="field">
+        <label>Note <span class="hint">optional, e.g. who it's for</span></label>
+        <input name="note" type="text" placeholder="for Sam">
+      </div>
+      <p class="hint">Each invite is a one-time code: it works for exactly one signup.</p>
+    </div>`);
+  openModal({
+    title: "New invite",
+    body,
+    submitLabel: "Create invite",
+    onSubmit: async () => {
+      const inv = await pb.collection("invites").create({ note: body.querySelector('[name="note"]').value.trim() });
+      await copyText(inviteLink(inv.code), "Invite link");
+      route();
+    },
+  });
+}
+
+async function viewInvites() {
+  const add = el(`<button class="btn btn-primary">+ New invite</button>`);
+  add.addEventListener("click", inviteModal);
+  setHead("Invites", "One-time signup codes", [add]);
+
+  const invites = await pb.collection("invites").getFullList({ sort: "-created" });
+  const box = el(`<div class="view-inner"></div>`);
+  if (!invites.length) {
+    const cta = el(`<button class="btn btn-primary">+ New invite</button>`);
+    cta.addEventListener("click", inviteModal);
+    box.append(emptyState(ICON_BELL, "No invites yet", "Signup needs an invite code. Create one and share its link.", cta));
+    $("view").replaceChildren(box);
+    return;
+  }
+  for (const inv of invites) {
+    const used = Boolean(inv.used_by);
+    const card = el(`
+      <article class="card card-hover">
+        <div class="item">
+          <div>
+            <div class="item-title">
+              <span class="mono">${esc(inv.code)}</span>
+              ${used ? `<span class="badge">used</span>` : `<span class="badge badge-ok">unused</span>`}
+            </div>
+            <div class="item-meta">
+              ${inv.note ? `<span>${esc(inv.note)}</span>` : ""}
+              <span title="${esc(absTime(inv.created))}">created ${esc(timeAgo(inv.created))}</span>
+              ${used ? `<span title="${esc(absTime(inv.used_at))}">used ${esc(timeAgo(inv.used_at))}</span>` : ""}
+            </div>
+          </div>
+          <div class="item-actions">
+            ${used ? "" : `<button class="btn btn-sm" data-copy>Copy link</button>`}
+            <button class="btn btn-sm btn-danger" data-del>Delete</button>
+          </div>
+        </div>
+      </article>`);
+    card.querySelector("[data-copy]")?.addEventListener("click", () => copyText(inviteLink(inv.code), "Invite link"));
+    card.querySelector("[data-del]").addEventListener("click", async () => {
+      if (!(await confirmDialog("Delete invite", used
+        ? "Delete this used invite from the list? The account it created stays."
+        : "Delete this invite? Its code stops working."))) return;
+      try {
+        await pb.collection("invites").delete(inv.id);
+        toast("Invite deleted", "ok");
+        route();
+      } catch (err) {
+        toast(apiError(err), "err");
+      }
+    });
+    box.append(card);
+  }
+  $("view").replaceChildren(box);
+}
+
 /* ---------------------------------------------------------------- router -- */
 
 const ROUTES = {
@@ -944,10 +1028,12 @@ const ROUTES = {
   sources: viewSources,
   listings: viewListings,
   alerters: viewAlerters,
+  invites: viewInvites,
 };
 
 function currentRoute() {
   const name = location.hash.replace(/^#\/?/, "") || "alerts";
+  if (name === "invites" && !isAdmin()) return "alerts";
   return ROUTES[name] ? name : "alerts";
 }
 
@@ -1033,6 +1119,13 @@ async function subscribeAlerts() {
   const email = pb.authStore.record?.email || "";
   $("account-email").textContent = email;
   $("account-avatar").textContent = (email[0] || "?").toUpperCase();
+  if (isAdmin()) {
+    $("nav").append(el(`
+      <a href="#/invites" data-route="invites">
+        <svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="m4 8 8 5 8-5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
+        <span>Invites</span>
+      </a>`));
+  }
 
   try {
     await loadAll();

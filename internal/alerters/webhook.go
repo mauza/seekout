@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
+
+	"github.com/mauza/seekout/internal/plugin"
 )
 
 type webhookConfig struct {
@@ -67,5 +69,13 @@ func (webhookAlerter) Send(ctx context.Context, rec *core.Record, alert Alert) e
 }
 
 func init() {
-	Register("webhook", webhookAlerter{})
+	Register(plugin.Info{
+		Type:        "webhook",
+		Label:       "Webhook",
+		Description: `POSTs JSON {title, body, url, image, text}; "text" makes it a Slack incoming webhook. Extra request headers go in config.headers (API only).`,
+		Fields: []plugin.Field{
+			{Key: "url", Label: "Webhook URL", Type: plugin.URL, Required: true,
+				Placeholder: "https://hooks.slack.com/services/..."},
+		},
+	}, webhookAlerter{})
 }
