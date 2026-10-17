@@ -148,15 +148,20 @@ poll.
 - the `ure` source (utahrealestate.com) has no public API: it opens a session
   with a `GET /search/map.search/type/{n}`, then reads server-rendered cards
   from the `map.inline.results` XHR and regex-parses the address/price/URL
-  out of the returned HTML. If the site's markup changes, parsing degrades
-  silently (fewer or zero listings, no `last_error`) — check the card
-  selectors at the top of `internal/sources/ure.go`.
+  out of the returned HTML. Every XHR must send the `X-CSRF-TOKEN` from the
+  page's `<meta name="csrf-token">` (since 2026-10); without it the site
+  answers 200 with an empty body. Results without parseable cards, a missing
+  token and an empty response all land in `last_error`; check the selectors
+  at the top of `internal/sources/ure.go` when they do.
 - seeker condition fields name a typed listing column (`title`, `price`,
   `url`, `kind`, `description`, `external_id`, `published`) or a dot path
   into the listing's `attrs` JSON — `sqft`, `address.city`. A leading
   `attrs.` is accepted and ignored, so `sqft` and `attrs.sqft` are the same
   field. `ure` listings carry `beds`, `baths`, `sqft`, `status`, `mls`,
-  `listing_type`, `days_on_market` and sometimes `open_house`.
+  `listing_type`, `days_on_market`, `zip`, usually `city` (left out when
+  the address slug is ambiguous) and sometimes `open_house`. Newest-first
+  results also include a few `SOLD` / `UNDER CONTRACT` rows, so home seekers
+  want a `status in ACTIVE,COMING SOON` condition.
 - replicas must stay 1 (embedded SQLite).
 - the cluster has arm64 workers, so images must be multi-arch — an
   amd64-only image crash-loops with `exec format error`.

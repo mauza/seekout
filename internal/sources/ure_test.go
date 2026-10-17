@@ -1,6 +1,10 @@
 package sources
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -117,6 +121,14 @@ func TestUreParseCards(t *testing.T) {
 		t.Error("open_house present on a card without one")
 	}
 
+	// City and ZIP come from the address slug; multi-word cities and a
+	// unit number ("#4B") between street and city must not confuse it.
+	for i, want := range [][2]string{{"Provo", "84604"}, {"South Ogden", "84403"}, {"Salt Lake City", "84101"}} {
+		if got[i].Attrs["city"] != want[0] || got[i].Attrs["zip"] != want[1] {
+			t.Errorf("card %d city/zip = %v/%v, want %s/%s", i, got[i].Attrs["city"], got[i].Attrs["zip"], want[0], want[1])
+		}
+	}
+
 	last := got[2]
 	if last.Attrs["sqft"] != 720 {
 		t.Errorf("unseparated sqft = %v, want 720", last.Attrs["sqft"])
@@ -142,5 +154,56 @@ func TestUreParseCardsEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("parsed %d cards from unmatched markup, want 0", len(got))
+	}
+}
+
+func TestUreCityZip(t *testing.T) {
+	cases := []struct{ slug, address, city, zip string }{
+		{"3311-W-3550-230-West-Haven-UT-84401", "3311 W 3550 #230 West Haven, UT", "West Haven", "84401"},
+		{"702-W-MCKELLAR-ST-Tooele-UT-84074", "702 W Mckellar St Tooele, UT", "Tooele", "84074"},
+		{"392-E-700--J-Vernal-UT-84078", "392 E 700 # J Vernal, UT", "Vernal", "84078"},
+		{"4089-W-BENVIEW-DR-West-Valley-City-UT-84120", "4089 W Benview Dr West Valley City, UT", "West Valley City", "84120"},
+		// A Title-case street can't be split from the city: no guess.
+		{"12-Main-St-Provo-UT-84604", "12 Main St Provo, UT", "", "84604"},
+		// Slug and visible address disagree: no guess.
+		{"12-MAIN-ST-Provo-UT-84604", "12 Main St Orem, UT", "", "84604"},
+		{"not-a-utah-slug", "somewhere", "", ""},
+	}
+	for _, c := range cases {
+		city, zip := ureCityZip(c.slug, c.address)
+		if city != c.city || zip != c.zip {
+			t.Errorf("ureCityZip(%q) = %q, %q; want %q, %q", c.slug, city, zip, c.city, c.zip)
+		}
+	}
+}
+
+// The site answers a results POST without the page's CSRF token with 200
+// and an empty body (2026-10); the poll must send it and name the failure.
+func TestUreCSRFHandshake(t *testing.T) {
+	const token = "0123456789abcdef0123456789abcdef"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`<html><head><meta name="csrf-token" content="` + token + `" /></head></html>`))
+			return
+		}
+		if r.Header.Get("X-CSRF-TOKEN") != token {
+			return // 200, empty body
+		}
+		w.Write([]byte(`{"html":"","listing_data":[]}`))
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+
+	got, err := ureGet(ctx, srv.Client(), srv.URL)
+	if err != nil || got != token {
+		t.Fatalf("ureGet = %q, %v; want the meta token", got, err)
+	}
+	var res map[string]any
+	if err := urePost(ctx, srv.Client(), srv.URL, srv.URL, got, &res); err != nil {
+		t.Fatalf("urePost with token: %v", err)
+	}
+	err = urePost(ctx, srv.Client(), srv.URL, srv.URL, "wrong", &res)
+	if err == nil || !strings.Contains(err.Error(), "empty response") {
+		t.Fatalf("urePost without a valid token: err = %v, want an empty-response error", err)
 	}
 }

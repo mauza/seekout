@@ -26,6 +26,10 @@ import (
 // then returns one page of results as JSON whose "html" field holds the
 // server-rendered listing cards. We poll the newest-first pages and let
 // the pipeline's (source, external_id) dedupe surface new listings.
+//
+// Since 2026-10 every XHR must carry the X-CSRF-TOKEN the search page
+// embeds in <meta name="csrf-token">; without it the results POST answers
+// 200 with an empty body.
 type ureSource struct{}
 
 type ureConfig struct {
@@ -48,18 +52,23 @@ var ureTypeCodes = map[string]string{
 }
 
 var (
-	ureCardSplit  = regexp.MustCompile(`<li id="mls-inline-`)
-	ureListno     = regexp.MustCompile(`listno="(\d+)"`)
-	ureSlug       = regexp.MustCompile(`address="([^"]+)"`)
-	urePrice      = regexp.MustCompile(`list___price">\s*\$?([\d,]+)`)
-	ureBedsBaths  = regexp.MustCompile(`(\d+) bds &bull; (\d+) ba &bull; ([\d,]+) SqFt`)
-	ureStatus     = regexp.MustCompile(`class="[^"]*status-\d+"></i>\s*([A-Za-z_ -]+)`)
-	ureDays       = regexp.MustCompile(`Days on URE:\s*([^<]+)`)
-	ureAgent      = regexp.MustCompile(`(?s)listing___agent[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
-	ureAddress    = regexp.MustCompile(`(?s)listing___address[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
-	ureOpenHouse  = regexp.MustCompile(`(?s)openhouse___label">\s*([^<]+?)\s*</div>`)
-	urePhoto      = regexp.MustCompile(`<img src="([^"]+)" class="listing-img"`)
-	ureNumStrip   = regexp.MustCompile(`[,$]`)
+	ureCardSplit = regexp.MustCompile(`<li id="mls-inline-`)
+	ureListno    = regexp.MustCompile(`listno="(\d+)"`)
+	ureSlug      = regexp.MustCompile(`address="([^"]+)"`)
+	urePrice     = regexp.MustCompile(`list___price">\s*\$?([\d,]+)`)
+	ureBedsBaths = regexp.MustCompile(`(\d+) bds &bull; (\d+) ba &bull; ([\d,]+) SqFt`)
+	ureStatus    = regexp.MustCompile(`class="[^"]*status-\d+"></i>\s*([A-Za-z_ -]+)`)
+	ureDays      = regexp.MustCompile(`Days on URE:\s*([^<]+)`)
+	ureAgent     = regexp.MustCompile(`(?s)listing___agent[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
+	ureAddress   = regexp.MustCompile(`(?s)listing___address[^>]*>\s*<span>\s*([^<]+?)\s*</span>`)
+	ureOpenHouse = regexp.MustCompile(`(?s)openhouse___label">\s*([^<]+?)\s*</div>`)
+	urePhoto     = regexp.MustCompile(`<img src="([^"]+)" class="listing-img"`)
+	ureNumStrip  = regexp.MustCompile(`[,$]`)
+	ureCSRF      = regexp.MustCompile(`<meta name="csrf-token" content="([^"]+)"`)
+	ureZip       = regexp.MustCompile(`^\d{5}$`)
+	// City words in the address slug are Title-case; street words are
+	// UPPERCASE, numbers or single letters ("3311-W-3550-230-West-Haven").
+	ureCityWord = regexp.MustCompile(`^[A-Z][a-z][A-Za-z'.]*$`)
 )
 
 func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing, error) {
@@ -92,7 +101,8 @@ func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing,
 
 	// A fresh session per poll: the page GET establishes the default
 	// search state, so the poll is stateless and survives cookie expiry.
-	if err := ureGet(ctx, client, ureBase+"/search/map.search/type/"+code); err != nil {
+	csrf, err := ureGet(ctx, client, ureBase+"/search/map.search/type/"+code)
+	if err != nil {
 		return nil, err
 	}
 
@@ -106,7 +116,7 @@ func (ureSource) Poll(ctx context.Context, src *core.Record) ([]listing.Listing,
 				Listno string `json:"listno"`
 			} `json:"listing_data"`
 		}
-		if err := urePost(ctx, client, u, ureBase+"/search/map.search/type/"+code, &res); err != nil {
+		if err := urePost(ctx, client, u, ureBase+"/search/map.search/type/"+code, csrf, &res); err != nil {
 			return nil, fmt.Errorf("ure: page %d: %w", pg, err)
 		}
 		listings, err := ureParseCards(res.HTML, typeName)
@@ -148,8 +158,16 @@ func ureParseCards(html string, listingType string) ([]listing.Listing, error) {
 		if m := ureAddress.FindStringSubmatch(frag); m != nil {
 			l.Title = normalizeSpace(m[1])
 		}
+		attrs := map[string]any{"mls": l.ExternalID, "listing_type": listingType}
 		if m := ureSlug.FindStringSubmatch(frag); m != nil {
 			l.URL = ureBase + "/" + strings.ToLower(m[1]) + "/" + l.ExternalID
+			city, zip := ureCityZip(m[1], l.Title)
+			if city != "" {
+				attrs["city"] = city
+			}
+			if zip != "" {
+				attrs["zip"] = zip
+			}
 		}
 		if m := urePrice.FindStringSubmatch(frag); m != nil {
 			if price, err := strconv.ParseFloat(ureNumStrip.ReplaceAllString(m[1], ""), 64); err == nil {
@@ -162,7 +180,6 @@ func ureParseCards(html string, listingType string) ([]listing.Listing, error) {
 		if m := ureAgent.FindStringSubmatch(frag); m != nil {
 			l.Description = normalizeSpace(m[1])
 		}
-		attrs := map[string]any{"mls": l.ExternalID, "listing_type": listingType}
 		if m := ureStatus.FindStringSubmatch(frag); m != nil {
 			attrs["status"] = normalizeSpace(m[1])
 		}
@@ -190,6 +207,34 @@ func ureParseCards(html string, listingType string) ([]listing.Listing, error) {
 	return out, nil
 }
 
+// ureCityZip pulls the city and ZIP out of an address slug such as
+// "3311-W-3550-230-West-Haven-UT-84401". The visible address has no
+// separator between street and city, so the city is the trailing run of
+// Title-case slug words. Ambiguous or inconsistent cases yield no city
+// rather than a guess, since the value becomes seeker-matchable.
+func ureCityZip(slug, address string) (city, zip string) {
+	parts := strings.Split(slug, "-")
+	if len(parts) < 3 || parts[len(parts)-2] != "UT" {
+		return "", ""
+	}
+	if ureZip.MatchString(parts[len(parts)-1]) {
+		zip = parts[len(parts)-1]
+	}
+	start := len(parts) - 2
+	for start > 0 && ureCityWord.MatchString(parts[start-1]) {
+		start--
+	}
+	// A run reaching back to the house number means the street is
+	// Title-case too, so street and city can't be told apart.
+	if start <= 1 {
+		return "", zip
+	}
+	if c := strings.Join(parts[start:len(parts)-2], " "); c != "" && strings.HasSuffix(address, " "+c+", UT") {
+		city = c
+	}
+	return city, zip
+}
+
 func ureParseDays(s string) (int, bool) {
 	s = normalizeSpace(s)
 	if s == "" {
@@ -205,25 +250,34 @@ func ureParseDays(s string) (int, bool) {
 	return days, true
 }
 
-func ureGet(ctx context.Context, client *http.Client, rawURL string) error {
+// ureGet loads the search page, which sets the session's search state, and
+// returns the CSRF token it embeds.
+func ureGet(ctx context.Context, client *http.Client, rawURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ureUA(req)
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("GET %s: %w", rawURL, err)
+		return "", fmt.Errorf("GET %s: %w", rawURL, err)
 	}
 	defer resp.Body.Close()
-	io.CopyN(io.Discard, resp.Body, 1<<20)
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", rawURL, err)
 	}
-	return nil
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s: status %d", rawURL, resp.StatusCode)
+	}
+	m := ureCSRF.FindSubmatch(body)
+	if m == nil {
+		return "", fmt.Errorf("GET %s: no csrf-token meta tag — page layout likely changed", rawURL)
+	}
+	return string(m[1]), nil
 }
 
-func urePost(ctx context.Context, client *http.Client, rawURL, referer string, v any) error {
+func urePost(ctx context.Context, client *http.Client, rawURL, referer, csrf string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(""))
 	if err != nil {
 		return err
@@ -231,6 +285,7 @@ func urePost(ctx context.Context, client *http.Client, rawURL, referer string, v
 	ureUA(req)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	req.Header.Set("Referer", referer)
+	req.Header.Set("X-CSRF-TOKEN", csrf)
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", rawURL, err)
@@ -242,6 +297,9 @@ func urePost(ctx context.Context, client *http.Client, rawURL, referer string, v
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("POST %s: status %d", rawURL, resp.StatusCode)
+	}
+	if len(body) == 0 {
+		return fmt.Errorf("POST %s: empty response — session or CSRF token rejected", rawURL)
 	}
 	if err := json.Unmarshal(body, v); err != nil {
 		return fmt.Errorf("POST %s: bad JSON: %w", rawURL, err)
