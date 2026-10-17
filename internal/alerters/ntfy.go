@@ -10,6 +10,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/mauza/seekout/internal/netguard"
 	"github.com/mauza/seekout/internal/plugin"
 )
 
@@ -60,7 +61,7 @@ func (ntfyAlerter) Send(ctx context.Context, rec *core.Record, alert Alert) erro
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := netguard.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("ntfy: %w", err)
 	}

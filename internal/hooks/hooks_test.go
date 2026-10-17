@@ -86,6 +86,9 @@ func TestConfigValidation(t *testing.T) {
 		{"sources", map[string]any{"type": "ure", "config": map[string]any{}}, ""},
 		{"alerters", map[string]any{"type": "ntfy", "config": map[string]any{}}, "topic is required"},
 		{"alerters", map[string]any{"type": "ntfy", "config": map[string]any{"topic": "t"}}, ""},
+		// Alerter targets inside the network are refused.
+		{"alerters", map[string]any{"type": "webhook", "config": map[string]any{"url": "http://10.43.0.10/hook"}}, "private or internal address"},
+		{"alerters", map[string]any{"type": "ntfy", "config": map[string]any{"topic": "t", "url": "http://localhost:8080"}}, "private or internal address"},
 		// Undeclared keys are kept, not rejected.
 		{"alerters", map[string]any{"type": "webhook", "config": map[string]any{
 			"url": "https://example.test/hook", "headers": map[string]any{"X-Key": "k"}}}, ""},

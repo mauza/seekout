@@ -33,7 +33,7 @@ import (
 var webFS embed.FS
 
 // version is reported to MCP clients; keep it in step with the image tag.
-const version = "0.7.0"
+const version = "0.7.1"
 
 func main() {
 	app := pocketbase.New()

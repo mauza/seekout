@@ -233,7 +233,7 @@ func TestAlertSkipsAnotherUsersAlerter(t *testing.T) {
 	alice := save(t, app, "users", map[string]any{"email": "a@example.test", "password": "password123"})
 	bob := save(t, app, "users", map[string]any{"email": "b@example.test", "password": "password123"})
 	bobs := save(t, app, "alerters", map[string]any{
-		"user": bob.Id, "name": "bob", "type": "webhook", "config": map[string]any{"url": "http://127.0.0.1:1/"}, "enabled": true,
+		"user": bob.Id, "name": "bob", "type": "webhook", "config": map[string]any{"url": "https://example.test/hook"}, "enabled": true,
 	})
 	src := save(t, app, "sources", map[string]any{
 		"name": "fake", "type": "fake", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,

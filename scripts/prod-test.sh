@@ -268,6 +268,8 @@ check "webhook test send" "$(code POST "/api/seekout/alerters/$HOOK_ID/test" "$T
 
 # Config is validated against the type's declared fields on save, so a
 # misconfigured alerter never gets stored.
+check "alerter to an internal address rejected" "$(code POST /api/collections/alerters/records "$TOKEN" \
+  "{\"user\":\"$USER_ID\",\"name\":\"test-internal\",\"type\":\"webhook\",\"config\":{\"url\":\"http://seekout.seekout/api/health\"},\"enabled\":true}")" "400"
 check "misconfigured alerter rejected" "$(code POST /api/collections/alerters/records "$TOKEN" \
   "{\"user\":\"$USER_ID\",\"name\":\"test-broken\",\"type\":\"ntfy\",\"config\":{},\"enabled\":true}")" "400"
 

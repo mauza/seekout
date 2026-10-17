@@ -47,6 +47,8 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
   `webhook.go`
 - `internal/match` — seeker conditions: validation and evaluation
 - `internal/pipeline` — the data path above
+- `internal/netguard` — the HTTP client for user-supplied URLs; refuses
+  internal addresses
 - `internal/hooks` — record rules the API rules can't express (conditions,
   alerter ownership, per-type config, invite-only signup) and the boot-time
   select sync
@@ -116,6 +118,13 @@ settings too advanced for the form.
 `plugin.Field` types: `text`, `url` (must be http/https), `number` (with
 optional `Min`/`Max`), `select` (`Options`), `secret` (left out of card
 summaries).
+
+Alerters send through `netguard.Client`, which refuses to connect to
+loopback, private, link-local, CGNAT (the tailnet) and other non-public
+addresses — checked against the IP actually dialed, so redirects and DNS
+changes are covered — and saves of an alerter whose URL points inside are
+rejected up front. Use it for any request to a user-supplied URL. Set
+`SEEKOUT_ALLOW_PRIVATE_TARGETS=1` to test against a local receiver.
 
 ### Add a listing kind
 

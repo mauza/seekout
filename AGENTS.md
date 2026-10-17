@@ -17,6 +17,8 @@ and how to add source types, alerter types, listing kinds and condition keys.
   `seekout admin` CLI); signup needs a one-time invite. Server-side code
   that creates sources on a user's behalf must check `admin` itself, as MCP
   `create_source` does.
+- Requests to user-supplied URLs (alerters) go through `netguard.Client`,
+  never `http.DefaultClient`: it refuses internal addresses.
 - Poll bookkeeping saves with `SaveNoValidate` on a freshly loaded record on
   purpose (`pipeline.finishSource`); keep it that way.
 - UI: check desktop and ~390px mobile widths. Inputs need an explicit

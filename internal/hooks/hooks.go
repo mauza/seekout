@@ -18,6 +18,7 @@ import (
 	"github.com/mauza/seekout/internal/alerters"
 	"github.com/mauza/seekout/internal/listing"
 	"github.com/mauza/seekout/internal/match"
+	"github.com/mauza/seekout/internal/netguard"
 	"github.com/mauza/seekout/internal/plugin"
 	"github.com/mauza/seekout/internal/sources"
 )
@@ -59,6 +60,18 @@ func Bind(app core.App) {
 	app.OnRecordValidate("alerters").BindFunc(func(e *core.RecordEvent) error {
 		if err := validateConfig(e.Record, alerters.Info); err != nil {
 			return err
+		}
+		// Alerter targets are user-supplied; internal ones are refused
+		// again on every send (netguard.Client), this is the clear error.
+		info, _ := alerters.Info(e.Record.GetString("type"))
+		var cfg map[string]any
+		_ = e.Record.UnmarshalJSONField("config", &cfg)
+		for _, f := range info.Fields {
+			if u, _ := cfg[f.Key].(string); f.Type == plugin.URL && u != "" {
+				if err := netguard.CheckURL(e.Context, u); err != nil {
+					return fieldErr("config", f.Key+": "+err.Error())
+				}
+			}
 		}
 		return e.Next()
 	})

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pocketbase/pocketbase/core"
 
+	"github.com/mauza/seekout/internal/netguard"
 	"github.com/mauza/seekout/internal/plugin"
 )
 
@@ -56,7 +57,7 @@ func (webhookAlerter) Send(ctx context.Context, rec *core.Record, alert Alert) e
 		req.Header.Set(k, v)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := netguard.Client.Do(req)
 	if err != nil {
 		return fmt.Errorf("webhook: %w", err)
 	}
