@@ -17,8 +17,18 @@ import (
 // Condition is one row of a seeker's conditions JSON array.
 type Condition struct {
 	Field string `json:"field"`
-	Op    string `json:"op"`   // "=", "!=", ">", "<", ">=", "<=", "in", "contains"
+	Op    string `json:"op"` // "=", "!=", ">", "<", ">=", "<=", "in", "contains"
 	Value any    `json:"value"`
+
+	// Soft conditions trade off against each other instead of each having
+	// to hold. Value is the target, Floor the worst acceptable value (past
+	// it the listing fails outright) and Best the value earning full credit.
+	// See Evaluate for the scoring. Only ordering ops (> >= < <=) can be
+	// soft, since they say which direction is better.
+	Soft   bool     `json:"soft,omitempty" jsonschema:"trade this condition off against other soft ones instead of requiring it"`
+	Floor  *float64 `json:"floor,omitempty" jsonschema:"soft only: worst acceptable value; past it the listing fails"`
+	Best   *float64 `json:"best,omitempty" jsonschema:"soft only: value that earns the full +1"`
+	Weight float64  `json:"weight,omitempty" jsonschema:"soft only: multiplier on this condition's score, default 1"` // 0 means 1
 }
 
 // Ops lists the supported condition operators.
@@ -33,26 +43,154 @@ func Validate(conditions []Condition) error {
 		if !slices.Contains(Ops, c.Op) {
 			return fmt.Errorf("condition %d: op %q is not one of %s", i, c.Op, strings.Join(Ops, " "))
 		}
+		if !c.Soft {
+			continue
+		}
+		dir, ok := softDirection(c.Op)
+		if !ok {
+			return fmt.Errorf("condition %d (%s): only > >= < <= can be soft", i, c.Field)
+		}
+		t, ok := toFloat(c.Value)
+		if !ok {
+			return fmt.Errorf("condition %d (%s): a soft condition needs a numeric value", i, c.Field)
+		}
+		if c.Floor == nil || c.Best == nil {
+			return fmt.Errorf("condition %d (%s): a soft condition needs floor and best", i, c.Field)
+		}
+		if dir*(t-*c.Floor) <= 0 {
+			return fmt.Errorf("condition %d (%s): floor %v must be worse than the target %v", i, c.Field, *c.Floor, t)
+		}
+		if dir*(*c.Best-t) <= 0 {
+			return fmt.Errorf("condition %d (%s): best %v must be better than the target %v", i, c.Field, *c.Best, t)
+		}
+		if c.Weight < 0 {
+			return fmt.Errorf("condition %d (%s): weight must not be negative", i, c.Field)
+		}
 	}
 	return nil
 }
 
-// Matches returns true when every condition holds for the listing (logical
-// AND). A seeker with no conditions matches everything from its sources.
+// Part is one soft condition's contribution to a Result.
+type Part struct {
+	Field  string  `json:"field"`
+	Value  any     `json:"value"` // the listing's value, nil when missing
+	Score  float64 `json:"score"` // -1..+1, before weighting
+	Weight float64 `json:"weight"`
+}
+
+// Result is the outcome of evaluating a seeker against one listing.
+type Result struct {
+	Matched bool    `json:"matched"`
+	Score   float64 `json:"score"` // weighted sum of Parts
+	Parts   []Part  `json:"parts,omitempty"`
+}
+
+// Matches reports Evaluate(...).Matched.
 func Matches(conditions []Condition, rec *core.Record) bool {
+	return Evaluate(conditions, rec).Matched
+}
+
+// Evaluate checks a listing against a seeker. Hard conditions must all hold
+// (logical AND); a seeker with no conditions matches everything from its
+// sources. Each soft condition scores the listing's value against its
+// target: 0 at the target, rising linearly to +1 at Best (capped), falling
+// to -1 at Floor, and failing the listing outright past Floor. A missing or
+// non-numeric value scores -1: unknown is treated as the worst acceptable,
+// never as a pass. The listing matches when every hard condition holds, no
+// soft one is past its floor, and the weighted sum of soft scores is >= 0,
+// so a shortfall on one soft condition has to be paid for by others.
+func Evaluate(conditions []Condition, rec *core.Record) Result {
 	var attrs map[string]any
 	_ = rec.UnmarshalJSONField("attrs", &attrs)
 
+	res := Result{Matched: true}
+	soft := false
 	for _, c := range conditions {
 		if c.Field == "" || c.Op == "" {
-			return false
+			return Result{}
 		}
 		lv, ok := fieldValue(rec, c.Field, attrs)
-		if !ok || !compare(lv, c.Op, c.Value) {
-			return false
+		if !c.Soft {
+			if !ok || !compare(lv, c.Op, c.Value) {
+				return Result{}
+			}
+			continue
 		}
+		soft = true
+		score, pass := softScore(c, lv, ok)
+		if !pass {
+			return Result{}
+		}
+		w := c.Weight
+		if w == 0 {
+			w = 1
+		}
+		if !ok {
+			lv = nil
+		}
+		res.Parts = append(res.Parts, Part{Field: c.Field, Value: lv, Score: score, Weight: w})
+		res.Score += w * score
 	}
-	return true
+	// The epsilon absorbs float error in sums that are exactly zero on paper.
+	if soft && res.Score < -1e-9 {
+		res.Matched = false
+	}
+	return res
+}
+
+// softDirection is +1 when higher values are better for op, -1 when lower.
+func softDirection(op string) (float64, bool) {
+	switch op {
+	case ">", ">=":
+		return 1, true
+	case "<", "<=":
+		return -1, true
+	}
+	return 0, false
+}
+
+// softScore scores one soft condition; pass is false past the floor or
+// when the condition itself is malformed (Validate prevents that).
+func softScore(c Condition, lv any, found bool) (score float64, pass bool) {
+	dir, ok := softDirection(c.Op)
+	t, tok := toFloat(c.Value)
+	if !ok || !tok || c.Floor == nil || c.Best == nil {
+		return 0, false
+	}
+	x, xok := toFloat(lv)
+	if !found || !xok {
+		return -1, true
+	}
+	gain := dir * (x - t)
+	if gain >= 0 {
+		return min(1, gain/(dir*(*c.Best-t))), true
+	}
+	span := dir * (t - *c.Floor)
+	if -gain > span*(1+1e-12) {
+		return 0, false
+	}
+	return max(-1, gain/span), true
+}
+
+// Explain renders a Result's soft parts for alert text, e.g.
+// "score +0.15: garage_capacity 2 (-1.00 x2), lot_acres 0.43 (+1.00)".
+func (r Result) Explain() string {
+	if len(r.Parts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(r.Parts))
+	for _, p := range r.Parts {
+		v := "missing"
+		if p.Value != nil {
+			v = stringify(p.Value)
+		}
+		w := ""
+		if p.Weight != 1 {
+			w = " x" + strconv.FormatFloat(p.Weight, 'f', -1, 64)
+		}
+		parts = append(parts, fmt.Sprintf("%s %s (%+.2f%s)", p.Field, v, p.Score, w))
+	}
+	return fmt.Sprintf("score %+.2f: %s", r.Score, strings.Join(parts, ", "))
 }
 
 // fieldValue resolves a condition field: typed listing columns first, then a

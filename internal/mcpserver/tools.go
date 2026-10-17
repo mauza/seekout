@@ -52,6 +52,10 @@ type Listing struct {
 	Published   string         `json:"published,omitempty"`
 	Created     string         `json:"created"`
 	Attrs       map[string]any `json:"attrs,omitempty"`
+	// Score and Why are set by search_listings when conditions include
+	// soft ones: the weighted score and its per-condition breakdown.
+	Score *float64 `json:"score,omitempty"`
+	Why   string   `json:"why,omitempty"`
 }
 
 type Seeker struct {
@@ -256,10 +260,15 @@ func registerTools(s *mcp.Server, app core.App) {
 			out := listingsOut{Listings: []Listing{}}
 			for _, r := range recs {
 				out.Scanned++
-				if !match.Matches(in.Conditions, r) {
+				res := match.Evaluate(in.Conditions, r)
+				if !res.Matched {
 					continue
 				}
-				out.Listings = append(out.Listings, toListing(r))
+				l := toListing(r)
+				if len(res.Parts) > 0 {
+					l.Score, l.Why = &res.Score, res.Explain()
+				}
+				out.Listings = append(out.Listings, l)
 				if len(out.Listings) == limit {
 					break
 				}

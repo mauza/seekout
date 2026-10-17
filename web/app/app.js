@@ -308,18 +308,66 @@ async function viewAlerts() {
 
 /* ---- seekers ---- */
 
+// Soft conditions trade off against each other (see internal/match); only
+// ordering ops can be soft, since they say which direction is better.
+const SOFT_OPS = [">", ">=", "<", "<="];
+
 function conditionRow(cond = { field: "", op: "=", value: "" }) {
   const row = el(`
     <div class="cond-row">
-      <input list="field-suggestions" placeholder="field" value="${esc(cond.field)}">
-      <select>${OPS.map((o) => `<option ${o === cond.op ? "selected" : ""}>${o}</option>`).join("")}</select>
-      <input placeholder="value" value="${esc(cond.value ?? "")}">
-      <button type="button" class="btn btn-icon btn-ghost" aria-label="Remove condition">
-        <svg viewBox="0 0 24 24" width="15" height="15"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-      </button>
+      <input data-k="field" type="text" list="field-suggestions" placeholder="field" value="${esc(cond.field)}">
+      <select data-k="op">${OPS.map((o) => `<option ${o === cond.op ? "selected" : ""}>${o}</option>`).join("")}</select>
+      <input data-k="value" type="text" placeholder="value" value="${esc(cond.value ?? "")}">
+      <div class="cond-actions">
+        <label class="soft-toggle" title="Soft: may trade off against other soft conditions">
+          <input type="checkbox" data-k="soft" ${cond.soft ? "checked" : ""}> soft
+        </label>
+        <button type="button" class="btn btn-icon btn-ghost" aria-label="Remove condition">
+          <svg viewBox="0 0 24 24" width="15" height="15"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="soft-fields" ${cond.soft ? "" : "hidden"}>
+        <label>floor <span class="hint">worst ok</span>
+          <input data-k="floor" type="number" step="any" value="${esc(cond.floor ?? "")}"></label>
+        <label>best <span class="hint">full credit</span>
+          <input data-k="best" type="number" step="any" value="${esc(cond.best ?? "")}"></label>
+        <label>weight <span class="hint">default 1</span>
+          <input data-k="weight" type="number" step="any" min="0" placeholder="1" value="${esc(cond.weight ?? "")}"></label>
+      </div>
     </div>`);
+  const q = (k) => row.querySelector(`[data-k="${k}"]`);
+  const sync = () => {
+    const ordering = SOFT_OPS.includes(q("op").value);
+    if (!ordering) q("soft").checked = false;
+    q("soft").disabled = !ordering;
+    row.querySelector(".soft-fields").hidden = !q("soft").checked;
+  };
+  q("op").addEventListener("change", sync);
+  q("soft").addEventListener("change", sync);
+  sync();
   row.querySelector("button").addEventListener("click", () => row.remove());
   return row;
+}
+
+// conditionFromRow reads a row back into the stored condition shape.
+function conditionFromRow(row) {
+  const q = (k) => row.querySelector(`[data-k="${k}"]`);
+  const c = { field: q("field").value.trim(), op: q("op").value, value: q("value").value.trim() };
+  if (q("soft").checked) {
+    c.soft = true;
+    for (const k of ["floor", "best", "weight"]) {
+      const v = q(k).value.trim();
+      if (v !== "") c[k] = Number(v);
+    }
+  }
+  return c;
+}
+
+function conditionChip(c) {
+  const soft = c.soft
+    ? ` <span class="dim">~ ${esc(c.floor)}…${esc(c.best)}${c.weight && c.weight !== 1 ? ` ×${esc(c.weight)}` : ""}</span>`
+    : "";
+  return `<span class="chip${c.soft ? " chip-soft" : ""}"><b>${esc(c.field)}</b> ${esc(c.op)} ${esc(c.value)}${soft}</span>`;
 }
 
 function checkGrid(items, selected, labelFn) {
@@ -350,7 +398,7 @@ function seekerModal(seeker) {
     <div class="stack">
       <div class="field">
         <label>Name</label>
-        <input name="name" required placeholder="cheap miata" value="${esc(seeker?.name || "")}">
+        <input name="name" type="text" required placeholder="cheap miata" value="${esc(seeker?.name || "")}">
       </div>
       <div class="field">
         <label>Kind</label>
@@ -360,7 +408,7 @@ function seekerModal(seeker) {
         </select>
       </div>
       <div class="field">
-        <label>Conditions <span class="hint">every one must hold</span></label>
+        <label>Conditions <span class="hint">hard ones must hold; soft ones trade off (score 0 at the value, +1 at best, −1 at floor, sum ≥ 0)</span></label>
         <div class="cond-editor"></div>
         <button type="button" class="btn btn-sm" data-add-cond>+ condition</button>
         <datalist id="field-suggestions">
@@ -395,10 +443,7 @@ function seekerModal(seeker) {
     submitLabel: editing ? "Save changes" : "Create seeker",
     onSubmit: async () => {
       const conditions = [...editor.querySelectorAll(".cond-row")]
-        .map((row) => {
-          const [field, op, value] = row.querySelectorAll("input, select");
-          return { field: field.value.trim(), op: op.value, value: value.value.trim() };
-        })
+        .map(conditionFromRow)
         .filter((c) => c.field);
 
       const data = {
@@ -456,7 +501,7 @@ async function viewSeekers() {
           </div>
           <div class="item-note cond-list">
             ${conds.length
-              ? conds.map((c) => `<span class="chip"><b>${esc(c.field)}</b> ${esc(c.op)} ${esc(c.value)}</span>`).join("")
+              ? conds.map(conditionChip).join("")
               : `<span class="chip">matches everything</span>`}
           </div>
         </div>

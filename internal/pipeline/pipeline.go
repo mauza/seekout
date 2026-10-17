@@ -119,10 +119,11 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 				app.Logger().Error("seeker conditions", "seeker", seeker.Id, "error", err)
 				continue
 			}
-			if !match.Matches(conds, rec) {
+			res := match.Evaluate(conds, rec)
+			if !res.Matched {
 				continue
 			}
-			if err := fireAlert(ctx, app, seeker, rec); err != nil {
+			if err := fireAlert(ctx, app, seeker, rec, res); err != nil {
 				app.Logger().Error("alert", "seeker", seeker.Id, "error", err)
 			}
 			stats.Matched++
@@ -197,14 +198,14 @@ func seekerApplies(seeker, src *core.Record, kind string) bool {
 }
 
 // fireAlert persists the alert record and fans out to the seeker's alerters.
-func fireAlert(ctx context.Context, app core.App, seeker, listingRec *core.Record) error {
+func fireAlert(ctx context.Context, app core.App, seeker, listingRec *core.Record, res match.Result) error {
 	col, err := app.FindCollectionByNameOrId("alerts")
 	if err != nil {
 		return err
 	}
 	alert := alerters.Alert{
 		Title: seeker.GetString("name"),
-		Body:  alertBody(listingRec),
+		Body:  alertBody(listingRec, res),
 		URL:   listingRec.GetString("url"),
 		Image: listingRec.GetString("image"),
 	}
@@ -274,10 +275,15 @@ func TestAlerter(ctx context.Context, app core.App, id string) error {
 	})
 }
 
-func alertBody(rec *core.Record) string {
+// alertBody is the listing title and price, plus the score breakdown for
+// a seeker with soft conditions so the notification says what traded off.
+func alertBody(rec *core.Record, res match.Result) string {
 	body := rec.GetString("title")
 	if price := rec.GetFloat("price"); price > 0 {
 		body = fmt.Sprintf("%s — $%.0f", body, price)
+	}
+	if why := res.Explain(); why != "" {
+		body += "\n" + why
 	}
 	return body
 }

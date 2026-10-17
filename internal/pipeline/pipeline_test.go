@@ -111,4 +111,43 @@ func TestPollEnrichment(t *testing.T) {
 	if err != nil || len(alerts) != 2 {
 		t.Fatalf("alerts = %d (%v), want 2 (a and b)", len(alerts), err)
 	}
+	if body := alerts[0].GetString("body"); strings.Contains(body, "score") {
+		t.Errorf("hard-only seeker alert body has a score line: %q", body)
+	}
+}
+
+// A soft seeker's alert says what traded off.
+func TestSoftSeekerAlertExplains(t *testing.T) {
+	app, err := tests.NewTestApp(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+	sources.Register("rss", &enrichingSource{listings: []listing.Listing{
+		{ExternalID: "x", Title: "12 Main St Lehi, UT", Price: 700000, Attrs: map[string]any{"lot_acres": 0.4}},
+	}})
+	user := save(t, app, "users", map[string]any{"email": "u@example.test", "password": "password123"})
+	src := save(t, app, "sources", map[string]any{
+		"name": "fake", "type": "rss", "kind": "home", "interval_minutes": 30, "enabled": true, "seeded": true,
+	})
+	save(t, app, "seekers", map[string]any{
+		"user": user.Id, "name": "soft", "kind": "any", "enabled": true,
+		"conditions": []map[string]any{
+			// enrichingSource sets garage_capacity 3; 2 would be the floor.
+			{"field": "garage_capacity", "op": ">=", "value": 4, "soft": true, "floor": 2, "best": 5, "weight": 2},
+			{"field": "lot_acres", "op": ">=", "value": 0.15, "soft": true, "floor": 0.12, "best": 0.4},
+		},
+	})
+	stats, err := PollSource(context.Background(), app, src)
+	if err != nil || stats.Matched != 1 {
+		t.Fatalf("poll: %+v %v, want 1 match (garage -0.5 x2 + lot +1 = 0)", stats, err)
+	}
+	alert, err := app.FindFirstRecordByData("alerts", "title", "12 Main St Lehi, UT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "12 Main St Lehi, UT — $700000\nscore +0.00: garage_capacity 3 (-0.50 x2), lot_acres 0.4 (+1.00)"
+	if got := alert.GetString("body"); got != want {
+		t.Errorf("body = %q\nwant   %q", got, want)
+	}
 }

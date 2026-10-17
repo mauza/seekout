@@ -142,3 +142,132 @@ func TestMatchesEnrichedHomeSeeker(t *testing.T) {
 		}
 	}
 }
+
+// The soft "Lehi home" seeker as stored: hard city/status/HOA, soft price,
+// garage (weight 2), lot, sqft and beds.
+const softSeekerJSON = `[
+	{"field":"city","op":"=","value":"Lehi"},
+	{"field":"status","op":"in","value":["ACTIVE","COMING SOON"]},
+	{"field":"hoa","op":"=","value":false},
+	{"field":"price","op":">","value":0},
+	{"field":"price","op":"<=","value":800000,"soft":true,"floor":850000,"best":650000},
+	{"field":"garage_capacity","op":">=","value":3,"soft":true,"floor":2,"best":4,"weight":2},
+	{"field":"lot_acres","op":">=","value":0.15,"soft":true,"floor":0.12,"best":0.4},
+	{"field":"sqft","op":">","value":2800,"soft":true,"floor":2500,"best":3800},
+	{"field":"beds","op":">=","value":4,"soft":true,"floor":3,"best":6}]`
+
+// lehiHome builds a listing record with the given price and attrs over a
+// qualifying Lehi baseline.
+func lehiHome(t *testing.T, price float64, attrs map[string]any) *core.Record {
+	t.Helper()
+	a := map[string]any{"city": "Lehi", "status": "ACTIVE", "hoa": false}
+	for k, v := range attrs {
+		if v == nil {
+			delete(a, k)
+		} else {
+			a[k] = v
+		}
+	}
+	rec := listingRecord(t, a)
+	rec.Set("price", price)
+	return rec
+}
+
+// Real Lehi listings from 2026-10-17, with the scores worked out by hand
+// when the user chose these settings.
+func TestEvaluateSoftSeeker(t *testing.T) {
+	var conds []Condition
+	if err := json.Unmarshal([]byte(softSeekerJSON), &conds); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(conds); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name    string
+		price   float64
+		attrs   map[string]any
+		matched bool
+		score   float64 // checked when matched or a plain score miss
+	}{
+		// 3-car, everything at or above target.
+		{"1419 S 270 E", 799999, map[string]any{"garage_capacity": 3, "lot_acres": 0.18, "sqft": 3757, "beds": 5}, true, 1.58},
+		// 2-car (-1 x2) paid for by a big lot and space.
+		{"425 E 2600 N", 770000, map[string]any{"garage_capacity": 2, "lot_acres": 0.43, "sqft": 3752, "beds": 6}, true, 1.15},
+		// 2-car with less to make up for it.
+		{"273 W 400 S", 790000, map[string]any{"garage_capacity": 2, "lot_acres": 0.18, "sqft": 3340, "beds": 5}, false, -0.77},
+		// Unknown garage scores -1 x2, never a pass.
+		{"1371 W 950 S #7", 799900, map[string]any{"garage_capacity": nil, "lot_acres": 0.36, "sqft": 3517, "beds": 4}, false, -0.44},
+		// Past a floor fails outright whatever the rest scores.
+		{"799 S 1180 W (price past floor)", 959000, map[string]any{"garage_capacity": 3, "lot_acres": 0.48, "sqft": 4087, "beds": 7}, false, 0},
+		{"650 N 420 Ln (0-car garage)", 575000, map[string]any{"garage_capacity": 0, "lot_acres": 0.23, "sqft": 3000, "beds": 6}, false, 0},
+		{"2 beds", 600000, map[string]any{"garage_capacity": 4, "lot_acres": 0.5, "sqft": 4000, "beds": 2}, false, 0},
+		// Hard conditions still gate everything.
+		{"HOA", 650000, map[string]any{"hoa": true, "garage_capacity": 4, "lot_acres": 0.5, "sqft": 4000, "beds": 6}, false, 0},
+	}
+	for _, c := range cases {
+		res := Evaluate(conds, lehiHome(t, c.price, c.attrs))
+		if res.Matched != c.matched {
+			t.Errorf("%s: matched = %v (score %+.2f, %s), want %v", c.name, res.Matched, res.Score, res.Explain(), c.matched)
+			continue
+		}
+		if c.score != 0 && (res.Score < c.score-0.01 || res.Score > c.score+0.01) {
+			t.Errorf("%s: score = %+.3f, want %+.2f (%s)", c.name, res.Score, c.score, res.Explain())
+		}
+	}
+}
+
+func TestSoftScoreShape(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	c := Condition{Field: "lot_acres", Op: ">=", Value: 0.15, Soft: true, Floor: f(0.12), Best: f(0.4)}
+	for _, tc := range []struct {
+		x     any
+		score float64
+		pass  bool
+	}{
+		{0.15, 0, true},    // at target
+		{0.275, 0.5, true}, // halfway to best
+		{0.4, 1, true},     // at best
+		{2.0, 1, true},     // capped
+		{0.135, -0.5, true},
+		{0.12, -1, true}, // at floor: worst acceptable
+		{0.119, 0, false},
+		{"0.30", 0.6, true}, // numeric strings, as the web UI stores values
+		{"n/a", -1, true},   // non-numeric scores like missing
+	} {
+		score, pass := softScore(c, tc.x, true)
+		if pass != tc.pass || (pass && (score < tc.score-1e-9 || score > tc.score+1e-9)) {
+			t.Errorf("x=%v: score %v pass %v, want %v %v", tc.x, score, pass, tc.score, tc.pass)
+		}
+	}
+	// Lower-is-better runs the same scale the other way.
+	p := Condition{Field: "price", Op: "<=", Value: 800000, Soft: true, Floor: f(850000), Best: f(650000)}
+	if s, ok := softScore(p, 725000.0, true); !ok || s != 0.5 {
+		t.Errorf("price 725k: %v %v, want 0.5", s, ok)
+	}
+	if s, ok := softScore(p, 825000.0, true); !ok || s != -0.5 {
+		t.Errorf("price 825k: %v %v, want -0.5", s, ok)
+	}
+}
+
+func TestValidateSoft(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	bad := map[string]Condition{
+		"equality op":   {Field: "beds", Op: "=", Value: 4, Soft: true, Floor: f(3), Best: f(6)},
+		"no floor":      {Field: "beds", Op: ">=", Value: 4, Soft: true, Best: f(6)},
+		"text target":   {Field: "beds", Op: ">=", Value: "four", Soft: true, Floor: f(3), Best: f(6)},
+		"floor better":  {Field: "beds", Op: ">=", Value: 4, Soft: true, Floor: f(5), Best: f(6)},
+		"best worse":    {Field: "price", Op: "<=", Value: 800000, Soft: true, Floor: f(850000), Best: f(900000)},
+		"neg weight":    {Field: "beds", Op: ">=", Value: 4, Soft: true, Floor: f(3), Best: f(6), Weight: -1},
+		"floor==target": {Field: "beds", Op: ">=", Value: 4, Soft: true, Floor: f(4), Best: f(6)},
+	}
+	for name, c := range bad {
+		if err := Validate([]Condition{c}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	ok := Condition{Field: "price", Op: "<=", Value: "800000", Soft: true, Floor: f(850000), Best: f(650000), Weight: 2}
+	if err := Validate([]Condition{ok}); err != nil {
+		t.Errorf("valid soft condition rejected: %v", err)
+	}
+}

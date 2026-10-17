@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"time"
 
+	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"gitlab.mauza.net/mauza/seekout/internal/appsettings"
+	"gitlab.mauza.net/mauza/seekout/internal/match"
 	"gitlab.mauza.net/mauza/seekout/internal/mcpserver"
 	"gitlab.mauza.net/mauza/seekout/internal/pipeline"
 	_ "gitlab.mauza.net/mauza/seekout/internal/sources" // registers source types
@@ -29,7 +31,7 @@ import (
 var webFS embed.FS
 
 // version is reported to MCP clients; keep it in step with the image tag.
-const version = "0.5.2"
+const version = "0.6.0"
 
 func main() {
 	app := pocketbase.New()
@@ -45,6 +47,20 @@ func main() {
 	})
 
 	app.RootCmd.AddCommand(mcpTokenCmd(app))
+
+	// Seeker conditions are free-form JSON, so a malformed one (a typo'd op,
+	// a soft condition without floor/best) would otherwise be stored and then
+	// silently never match. Checked on every save path: web UI, REST and MCP.
+	app.OnRecordValidate("seekers").BindFunc(func(e *core.RecordEvent) error {
+		var conds []match.Condition
+		if err := e.Record.UnmarshalJSONField("conditions", &conds); err != nil {
+			return validation.Errors{"conditions": validation.NewError("invalid_conditions", "conditions: "+err.Error())}
+		}
+		if err := match.Validate(conds); err != nil {
+			return validation.Errors{"conditions": validation.NewError("invalid_conditions", err.Error())}
+		}
+		return e.Next()
+	})
 
 	if err := app.Cron().Add("poll_sources", "* * * * *", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

@@ -153,6 +153,20 @@ poll.
   answers 200 with an empty body. Results without parseable cards, a missing
   token and an empty response all land in `last_error`; check the selectors
   at the top of `internal/sources/ure.go` when they do.
+- seeker conditions are hard by default: every one must hold. A condition
+  with an ordering op (`> >= < <=`) can instead be soft, with `floor`
+  (worst acceptable), `best` (full credit) and optional `weight` (default 1):
+  `{"field":"garage_capacity","op":">=","value":3,"soft":true,"floor":2,"best":4,"weight":2}`.
+  Each soft condition scores 0 at its value, rises linearly to +1 at `best`
+  (capped), falls to -1 at `floor`, and fails the listing outright past
+  `floor`; a missing value scores -1. A listing matches when every hard
+  condition holds and the weighted soft scores sum to >= 0, so a shortfall
+  on one has to be paid for by others. Alerts from a soft seeker carry the
+  breakdown (`score +0.15: garage_capacity 2 (-1.00 x2), lot_acres 0.43
+  (+1.00), ...`), and `search_listings` returns it per listing. Conditions
+  are validated on every seeker save (`match.Validate`, bound in
+  `OnRecordValidate`), so a malformed one is a 400, not a seeker that
+  silently never matches.
 - seeker condition fields name a typed listing column (`title`, `price`,
   `url`, `kind`, `description`, `external_id`, `published`) or a dot path
   into the listing's `attrs` JSON — `sqft`, `address.city`. A leading
