@@ -3,14 +3,17 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tests"
 
 	"github.com/mauza/seekout/internal/hooks"
 	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/match"
 	"github.com/mauza/seekout/internal/plugin"
 	"github.com/mauza/seekout/internal/sources"
 	_ "github.com/mauza/seekout/migrations"
@@ -258,5 +261,45 @@ func TestAlertSkipsAnotherUsersAlerter(t *testing.T) {
 	_ = alert.UnmarshalJSONField("delivered", &delivered)
 	if len(delivered) != 1 || delivered[0]["ok"] != false || delivered[0]["error"] != "alerter belongs to another user" {
 		t.Errorf("delivered = %v, want a refusal", delivered)
+	}
+}
+
+// Search gates like a seeker (kind, source allow-list, since), counts every
+// match while returning only the newest `limit`, and reports soft scores.
+func TestSearch(t *testing.T) {
+	app := newApp(t, &enrichingSource{})
+	a := save(t, app, "sources", map[string]any{"name": "a", "type": "fake", "kind": "home", "config": map[string]any{}, "interval_minutes": 30})
+	b := save(t, app, "sources", map[string]any{"name": "b", "type": "fake", "kind": "car", "config": map[string]any{}, "interval_minutes": 30})
+	for i, price := range []int{100, 200, 300, 400} {
+		save(t, app, "listings", map[string]any{"source": a.Id, "kind": "home", "external_id": fmt.Sprint("a", i), "title": fmt.Sprint("home ", price), "price": price, "attrs": map[string]any{"beds": i + 2}})
+	}
+	save(t, app, "listings", map[string]any{"source": b.Id, "kind": "car", "external_id": "b0", "title": "car", "price": 150})
+
+	cheap := []match.Condition{{Field: "price", Op: "<", Value: 350}}
+	res, err := Search(app, Query{Conditions: cheap}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scanned != 5 || res.Matched != 4 || len(res.Hits) != 2 {
+		t.Fatalf("all kinds: scanned %d matched %d hits %d, want 5/4/2", res.Scanned, res.Matched, len(res.Hits))
+	}
+
+	res, _ = Search(app, Query{Kind: "home", Conditions: cheap}, 10)
+	if res.Matched != 3 {
+		t.Fatalf("kind home: matched %d, want 3", res.Matched)
+	}
+	res, _ = Search(app, Query{Kind: "any", Sources: []string{b.Id}, Conditions: cheap}, 10)
+	if res.Matched != 1 || res.Hits[0].Record.GetString("title") != "car" {
+		t.Fatalf("source b: got %+v", res)
+	}
+	res, _ = Search(app, Query{Since: time.Now().Add(time.Hour)}, 10)
+	if res.Scanned != 0 {
+		t.Fatalf("since the future: scanned %d, want 0", res.Scanned)
+	}
+
+	floor, best := 2.0, 5.0
+	res, _ = Search(app, Query{Conditions: []match.Condition{{Field: "beds", Op: ">=", Value: 3, Soft: true, Floor: &floor, Best: &best}}}, 10)
+	if res.Matched != 3 || len(res.Hits[0].Result.Parts) != 1 {
+		t.Fatalf("soft: got matched %d, hits %+v", res.Matched, res.Hits)
 	}
 }

@@ -20,10 +20,6 @@ import (
 const (
 	defaultLimit = 20
 	maxLimit     = 100
-	// searchScan bounds how many recent listings search_listings evaluates
-	// conditions against: conditions run in Go (attrs paths, loose typing),
-	// not SQL, so the scan has to stop somewhere.
-	searchScan = 5000
 )
 
 // ---------------------------------------------------------------------------
@@ -95,6 +91,8 @@ type listingsOut struct {
 	// Scanned is how many stored listings the conditions were evaluated
 	// against; it equals the scan cap when older listings went unchecked.
 	Scanned int `json:"scanned"`
+	// Matched counts every match among the scanned listings, beyond limit.
+	Matched int `json:"matched"`
 }
 type seekersOut struct {
 	Seekers []Seeker `json:"seekers"`
@@ -248,40 +246,28 @@ func registerTools(s *mcp.Server, app core.App) {
 			if err := match.Validate(in.Conditions); err != nil {
 				return nil, listingsOut{}, err
 			}
-			filters, params := []string{}, dbx.Params{}
-			if in.Kind != "" {
-				filters, params["kind"] = append(filters, "kind = {:kind}"), in.Kind
-			}
+			q := pipeline.Query{Kind: in.Kind, Conditions: in.Conditions}
 			if in.SourceID != "" {
-				filters, params["source"] = append(filters, "source = {:source}"), in.SourceID
+				q.Sources = []string{in.SourceID}
 			}
 			if in.Since != "" {
-				since, err := parseTime(in.Since)
+				since, err := time.Parse(time.RFC3339, in.Since)
 				if err != nil {
-					return nil, listingsOut{}, err
+					return nil, listingsOut{}, fmt.Errorf("since: want RFC 3339 (e.g. 2026-10-01T00:00:00Z): %w", err)
 				}
-				filters, params["since"] = append(filters, "created >= {:since}"), since
+				q.Since = since
 			}
-			recs, err := app.FindRecordsByFilter("listings", strings.Join(filters, " && "), "-created", searchScan, 0, params)
+			res, err := pipeline.Search(app, q, clampLimit(in.Limit))
 			if err != nil {
 				return nil, listingsOut{}, err
 			}
-			limit := clampLimit(in.Limit)
-			out := listingsOut{Listings: []Listing{}}
-			for _, r := range recs {
-				out.Scanned++
-				res := match.Evaluate(in.Conditions, r)
-				if !res.Matched {
-					continue
-				}
-				l := toListing(r)
-				if len(res.Parts) > 0 {
-					l.Score, l.Why = &res.Score, res.Explain()
+			out := listingsOut{Listings: []Listing{}, Scanned: res.Scanned, Matched: res.Matched}
+			for _, h := range res.Hits {
+				l := toListing(h.Record)
+				if len(h.Result.Parts) > 0 {
+					l.Score, l.Why = &h.Result.Score, h.Result.Explain()
 				}
 				out.Listings = append(out.Listings, l)
-				if len(out.Listings) == limit {
-					break
-				}
 			}
 			return nil, out, nil
 		})

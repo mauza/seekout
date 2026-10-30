@@ -24,25 +24,28 @@
     <nav class="nav" id="nav">
       <a href="#/alerts" data-route="alerts">
         <svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-6 6c0 5-2 6-2 6h16s-2-1-2-6a6 6 0 0 0-6-6Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><path d="M10 19a2 2 0 0 0 4 0" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-        <span>Alerts</span>
+        <span>Matches</span>
         <span class="nav-count" id="nav-alerts-count" hidden></span>
       </a>
       <a href="#/seekers" data-route="seekers">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="m15.5 15.5 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <span>Seekers</span>
+        <span>Searches</span>
       </a>
-      <a href="#/sources" data-route="sources">
-        <svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 5a15 15 0 0 1 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><circle cx="5" cy="19" r="1.6" fill="currentColor"/></svg>
-        <span>Sources</span>
+      <a href="#/alerters" data-route="alerters">
+        <svg viewBox="0 0 24 24"><path d="M4 12 20 4l-6 16-3-7-7-1Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></svg>
+        <span>Notifications</span>
       </a>
       <a href="#/listings" data-route="listings">
         <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M8 10h8M8 14h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
         <span>Listings</span>
       </a>
-      <a href="#/alerters" data-route="alerters">
-        <svg viewBox="0 0 24 24"><path d="M4 6.5h16M4 12h16M4 17.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="18" cy="17.5" r="2.2" stroke="currentColor" stroke-width="1.8" fill="none"/></svg>
-        <span>Alerters</span>
-      </a>
+      <div class="nav-group" id="nav-shared">
+        <span class="nav-label">Shared</span>
+        <a href="#/sources" data-route="sources">
+          <svg viewBox="0 0 24 24"><path d="M4 11a9 9 0 0 1 9 9M4 5a15 15 0 0 1 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><circle cx="5" cy="19" r="1.6" fill="currentColor"/></svg>
+          <span>Sources</span>
+        </a>
+      </div>
     </nav>
 
     <div class="sidebar-foot">
@@ -50,7 +53,7 @@
         <div class="avatar" id="account-avatar">?</div>
         <div class="account-meta">
           <span class="truncate" id="account-email">…</span>
-          <span class="dim small">signed in</span>
+          <span class="dim small" id="account-role">signed in</span>
         </div>
       </div>
       <button class="btn btn-ghost btn-sm" id="signout">Sign out</button>

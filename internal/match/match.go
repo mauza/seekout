@@ -37,34 +37,35 @@ var Ops = []string{"=", "!=", ">", "<", ">=", "<=", "in", "contains"}
 // Validate rejects conditions Matches would silently treat as never-true.
 func Validate(conditions []Condition) error {
 	for i, c := range conditions {
+		n := i + 1 // messages count from 1, as people do
 		if c.Field == "" {
-			return fmt.Errorf("condition %d: field is required", i)
+			return fmt.Errorf("condition %d: field is required", n)
 		}
 		if !slices.Contains(Ops, c.Op) {
-			return fmt.Errorf("condition %d: op %q is not one of %s", i, c.Op, strings.Join(Ops, " "))
+			return fmt.Errorf("condition %d: op %q is not one of %s", n, c.Op, strings.Join(Ops, " "))
 		}
 		if !c.Soft {
 			continue
 		}
 		dir, ok := softDirection(c.Op)
 		if !ok {
-			return fmt.Errorf("condition %d (%s): only > >= < <= can be soft", i, c.Field)
+			return fmt.Errorf("condition %d (%s): only > >= < <= can be soft", n, c.Field)
 		}
 		t, ok := toFloat(c.Value)
 		if !ok {
-			return fmt.Errorf("condition %d (%s): a soft condition needs a numeric value", i, c.Field)
+			return fmt.Errorf("condition %d (%s): a soft condition needs a numeric value", n, c.Field)
 		}
 		if c.Floor == nil || c.Best == nil {
-			return fmt.Errorf("condition %d (%s): a soft condition needs floor and best", i, c.Field)
+			return fmt.Errorf("condition %d (%s): a soft condition needs floor and best", n, c.Field)
 		}
 		if dir*(t-*c.Floor) <= 0 {
-			return fmt.Errorf("condition %d (%s): floor %v must be worse than the target %v", i, c.Field, *c.Floor, t)
+			return fmt.Errorf("condition %d (%s): floor %v must be worse than the target %v", n, c.Field, *c.Floor, t)
 		}
 		if dir*(*c.Best-t) <= 0 {
-			return fmt.Errorf("condition %d (%s): best %v must be better than the target %v", i, c.Field, *c.Best, t)
+			return fmt.Errorf("condition %d (%s): best %v must be better than the target %v", n, c.Field, *c.Best, t)
 		}
 		if c.Weight < 0 {
-			return fmt.Errorf("condition %d (%s): weight must not be negative", i, c.Field)
+			return fmt.Errorf("condition %d (%s): weight must not be negative", n, c.Field)
 		}
 	}
 	return nil

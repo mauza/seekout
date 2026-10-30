@@ -34,6 +34,12 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
   sources. Only one poll of a source runs at a time.
 - Alerts are delivered once: a failed delivery is recorded on the alert, not
   retried.
+- `pipeline.Search` runs a seeker's kind, sources and conditions over stored
+  listings without alerting. It backs the search editor's live preview
+  (`POST /api/seekout/preview`: `{kind, sources, conditions, days, limit}` →
+  how many listings from the last `days` would have matched, plus the newest
+  few with their soft scores) and MCP `search_listings`. It scans at most the
+  newest 5000 listings.
 
 ## Source layout
 
@@ -56,9 +62,14 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
 - `internal/appsettings` — mail settings from the environment
 - `migrations/` — collections and API rules
 - `web/` — framework-free UI, no build step: `index.html` + `landing.*` are
-  the public landing page and signup, `web/app/` is the signed-in app (hash
-  routes for Alerts, Seekers, Sources, Listings, Alerters), `styles.css` is
-  the shared design system, `vendor/` holds the PocketBase JS SDK
+  the public landing page and signup, `web/app/` is the signed-in app,
+  `styles.css` is the shared design system, `vendor/` holds the PocketBase
+  JS SDK. The app speaks plainly where the API doesn't: alerts are
+  **Matches**, seekers **Searches**, alerters **Notifications** (hash routes
+  keep the API names: `#/alerts`, `#/seekers`, `#/alerters`, plus
+  `#/listings`, `#/sources`, `#/invites`), and a soft condition is
+  **Flexible**, with floor/best/weight labelled "accept down/up to",
+  "ideal" and "importance".
 
 ## Extending
 

@@ -23,6 +23,7 @@ import (
 	"github.com/mauza/seekout/internal/appsettings"
 	"github.com/mauza/seekout/internal/hooks"
 	"github.com/mauza/seekout/internal/listing"
+	"github.com/mauza/seekout/internal/match"
 	"github.com/mauza/seekout/internal/mcpserver"
 	"github.com/mauza/seekout/internal/pipeline"
 	"github.com/mauza/seekout/internal/sources"
@@ -33,7 +34,7 @@ import (
 var webFS embed.FS
 
 // version is reported to MCP clients; keep it in step with the image tag.
-const version = "0.7.1"
+const version = "0.8.0"
 
 func main() {
 	app := pocketbase.New()
@@ -79,6 +80,30 @@ func main() {
 				"alerters": alerters.Infos(),
 				"kinds":    listing.Kinds,
 			})
+		}).Bind(apis.RequireAuth())
+
+		// Kubernetes probes hit /api/health every few seconds; logging each
+		// success buried everything else in the request log (and wrote to
+		// auxiliary.db constantly). Failures are still logged.
+		se.Router.BindFunc(func(e *core.RequestEvent) error {
+			if e.Request.URL.Path == "/api/health" {
+				return apis.SkipSuccessActivityLog().Func(e)
+			}
+			return e.Next()
+		})
+
+		// Live preview for the seeker editor: which stored listings a
+		// seeker with these settings would have matched.
+		se.Router.POST("/api/seekout/preview", func(e *core.RequestEvent) error {
+			var in previewRequest
+			if err := e.BindBody(&in); err != nil {
+				return e.BadRequestError("invalid body", err)
+			}
+			out, err := preview(app, in)
+			if err != nil {
+				return e.BadRequestError(err.Error(), nil)
+			}
+			return e.JSON(http.StatusOK, out)
 		}).Bind(apis.RequireAuth())
 
 		// On-demand poll for one source (the web UI's "poll now" button).
@@ -140,6 +165,52 @@ func main() {
 	if err := app.Start(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+type previewRequest struct {
+	Kind       string            `json:"kind"`
+	Sources    []string          `json:"sources"`
+	Conditions []match.Condition `json:"conditions"`
+	Days       int               `json:"days"`  // look back this far; default 30
+	Limit      int               `json:"limit"` // examples to return; default 6
+}
+
+// preview runs a seeker's settings over recently stored listings. Listings
+// are shared, so this exposes nothing the caller can't already read.
+func preview(app core.App, in previewRequest) (map[string]any, error) {
+	if err := match.Validate(in.Conditions); err != nil {
+		return nil, err
+	}
+	days := in.Days
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	limit := in.Limit
+	if limit <= 0 || limit > 50 {
+		limit = 6
+	}
+	since := time.Now().AddDate(0, 0, -days)
+	res, err := pipeline.Search(app, pipeline.Query{
+		Kind: in.Kind, Sources: in.Sources, Since: since, Conditions: in.Conditions,
+	}, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]map[string]any, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		item := h.Record.PublicExport()
+		if len(h.Result.Parts) > 0 {
+			item["score"], item["parts"] = h.Result.Score, h.Result.Parts
+		}
+		items = append(items, item)
+	}
+	return map[string]any{
+		"days":     days,
+		"scanned":  res.Scanned,
+		"capped":   res.Scanned >= pipeline.SearchScan,
+		"matched":  res.Matched,
+		"listings": items,
+	}, nil
 }
 
 // adminCmd grants or revokes admin (managing the shared sources and
