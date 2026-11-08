@@ -223,6 +223,29 @@ it doesn't know is silently dropped when a seeker is saved from the UI.
     no detail fields. Listings stored before 0.5.2 were never enriched.
   - Newest-first results include a few `SOLD` / `UNDER CONTRACT` rows, so
     home seekers want `status in ACTIVE,COMING SOON`.
+- `ksl` (classifieds.ksl.com and cars.ksl.com) takes a search URL built on
+  the site, e.g.
+  `https://classifieds.ksl.com/search/cat/Outdoors+and+Sporting/keyword/kayak/priceTo/500`
+  or `https://cars.ksl.com/search/fuel/Electric/body/Truck/priceTo/50000`
+  (filters are path segments; newest first is the default sort). Both sites
+  are the same app with the same result shape. The page is
+  Next.js: results are read from the server-rendered RSC payload
+  (`self.__next_f.push([1,"..."])` strings, `"initialState":{"results":[[...]]}`).
+  - Only the first page is reachable: `/page/N` is ignored and infinite scroll
+    is a Next server action whose id changes every KSL deploy. That page is
+    ~11 classifieds or ~19 cars, a few of them `featured` (repeated further
+    down; deduped). A narrow search polled every 10-30 minutes misses
+    nothing; a broad one with more new posts per interval than that will.
+  - PerimeterX answers Go's default User-Agent with a 403 captcha; the source
+    sends a browser UA and reports a block as such in `last_error`.
+  - Listings carry `city`, `state`, `zip`, `category`, `sub_category`,
+    `seller_type` (Private/Business), `market_type` (Sale/Wanted/Rent...),
+    `listing_type`, `featured`, `verified_seller`, and `price_modifier`
+    (e.g. OBO) / `rental_unit` when set. Cars add `make`, `model`, `trim`,
+    `year`, `mileage`, `new_used` and `vin`. `published` is when the ad was first
+    created; renewals bump an ad up the newest sort but keep its id, so they
+    don't alert again. No description (the list has none; the site's keyword
+    filter already searches it). Use kind `classified` (or `car`).
 
 ## MCP
 
