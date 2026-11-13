@@ -89,9 +89,10 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
   `Deal: $7.81/GB vs typical $10.00/GB, 22% under (comps+anchor, 7 comps,
   high)`.
 - **Asking for a deal** is ordinary conditions, which the editor's "Good
-  deals only" switch writes: `deal.pct_below >= 15` and `deal.confidence in
-  high,medium`. A listing that couldn't be priced has no `attrs.deal` and
-  fails them.
+  deals only" switch writes: `deal.pct_below >= 15`, optionally an upper
+  limit `deal.pct_below <= 50` (the switch's "to" box), and
+  `deal.confidence in high,medium`. A listing that couldn't be priced has no
+  `attrs.deal` and fails them.
 - **Failures.** A classifier error never holds up the poll: the listing is
   stored with status `pending`, seekers without deal conditions are decided
   as usual, and an hourly cron retries pending listings from the last 24

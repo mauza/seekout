@@ -150,6 +150,7 @@ a.item-title:hover { color: var(--accent); }
 /* search editor: good deals switch */
 .deal-field { gap: 0.4rem; }
 .deal-opts { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; color: var(--fg-muted); }
+.deal-opts label { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0; font-weight: inherit; color: inherit; }
 .deal-opts input { width: 4.5rem; }
 
 /* prices page */

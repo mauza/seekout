@@ -781,24 +781,27 @@ function seekerPreview(read) {
   };
 }
 
-// "Good deals only" is two ordinary conditions on attrs.deal. The editor
-// shows them as one switch; splitDeal pulls them out of a stored list and
-// dealConditions puts them back.
+// "Good deals only" is ordinary conditions on attrs.deal: a minimum % under
+// typical, an optional maximum, and confidence. The editor shows them as one
+// switch; splitDeal pulls them out of a stored list and dealConditions puts
+// them back.
 const DEAL_DEFAULT = 15;
 function splitDeal(conds) {
   const pctCond = conds.find((c) => c.field === "deal.pct_below" && c.op === ">=" && !c.soft);
-  if (!pctCond) return { pct: null, rest: conds };
-  const rest = conds.filter((c) => c !== pctCond && !(c.field === "deal.confidence" && c.op === "in"));
-  return { pct: Number(pctCond.value), rest };
+  if (!pctCond) return { pct: null, max: null, rest: conds };
+  const maxCond = conds.find((c) => c.field === "deal.pct_below" && c.op === "<=" && !c.soft);
+  const rest = conds.filter((c) => c !== pctCond && c !== maxCond && !(c.field === "deal.confidence" && c.op === "in"));
+  return { pct: Number(pctCond.value), max: maxCond ? Number(maxCond.value) : null, rest };
 }
-const dealConditions = (pct) => [
+const dealConditions = (pct, max) => [
   { field: "deal.pct_below", op: ">=", value: pct },
+  ...(max > 0 ? [{ field: "deal.pct_below", op: "<=", value: max }] : []),
   { field: "deal.confidence", op: "in", value: "high,medium" },
 ];
 
 function seekerModal(seeker) {
   const editing = Boolean(seeker);
-  const { pct: dealPct, rest: conds } = splitDeal(Array.isArray(seeker?.conditions) ? seeker.conditions : []);
+  const { pct: dealPct, max: dealMax, rest: conds } = splitDeal(Array.isArray(seeker?.conditions) ? seeker.conditions : []);
 
   const body = el(`
     <div class="stack">
@@ -827,9 +830,11 @@ function seekerModal(seeker) {
           <span class="switch"><input type="checkbox" data-deal ${dealPct !== null ? "checked" : ""}><span class="track"></span></span>
           <span>Good deals only</span>
         </label>
-        <label class="deal-opts small" ${dealPct !== null ? "" : "hidden"}>At least
-          <input type="number" data-deal-pct min="1" max="90" step="1" value="${esc(dealPct ?? DEAL_DEFAULT)}" aria-label="Percent under typical">
-          % under the typical price</label>
+        <div class="deal-opts small" ${dealPct !== null ? "" : "hidden"}>
+          <label>From <input type="number" data-deal-pct min="1" max="90" step="1" value="${esc(dealPct ?? DEAL_DEFAULT)}" aria-label="At least this % under typical"></label>
+          <label>to <input type="number" data-deal-max min="1" max="99" step="1" placeholder="any" value="${esc(dealMax ?? "")}" aria-label="At most this % under typical (blank for no limit)"></label>
+          <span>% under the typical price</span>
+        </div>
         <p class="hint">Typical is what this kind of item goes for in recent listings, checked against web prices every few days. It is per unit (per GB for memory), so different sizes compare. Listings that can't be priced, like whole systems on a parts search, won't match.</p>
       </div>
       <div data-preview></div>
@@ -869,12 +874,13 @@ function seekerModal(seeker) {
 
   const dealOn = body.querySelector("[data-deal]");
   const dealPctInput = body.querySelector("[data-deal-pct]");
+  const dealMaxInput = body.querySelector("[data-deal-max]");
   dealOn.addEventListener("change", () => {
     body.querySelector(".deal-opts").hidden = !dealOn.checked;
   });
   const read = () => {
     const conditions = [...editor.querySelectorAll(".cond-row")].map(conditionFromRow).filter((c) => c.field);
-    if (dealOn.checked) conditions.push(...dealConditions(Number(dealPctInput.value) || DEAL_DEFAULT));
+    if (dealOn.checked) conditions.push(...dealConditions(Number(dealPctInput.value) || DEAL_DEFAULT, Number(dealMaxInput.value)));
     return {
       kind: body.querySelector('[name="kind"]').value,
       sources: checked(sourcesGrid),
