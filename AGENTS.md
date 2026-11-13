@@ -21,6 +21,11 @@ and how to add source types, alerter types, listing kinds and condition keys.
   never `http.DefaultClient`: it refuses internal addresses.
 - Poll bookkeeping saves with `SaveNoValidate` on a freshly loaded record on
   purpose (`pipeline.finishSource`); keep it that way.
+- Pricing (`internal/pricing`) gets structured LLM output from a forced tool
+  call: the LiteLLM gateway drops `response_format` for the ChatGPT models.
+  Tests use httptest fakes for the gateway and SearXNG. After a prompt
+  change, run `seekout pricing backfill` on a prod-backup copy (README "Run
+  locally" + sources/alerters disabled) and read the verdicts.
 - UI: check desktop and ~390px mobile widths. Inputs need an explicit
   `type=` to pick up the shared styles.
 - Release: bump `version` in `main.go`, then follow README "Deploy". Read

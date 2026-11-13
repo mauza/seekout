@@ -22,6 +22,7 @@ import (
 	"github.com/mauza/seekout/internal/alerters"
 	"github.com/mauza/seekout/internal/listing"
 	"github.com/mauza/seekout/internal/match"
+	"github.com/mauza/seekout/internal/pricing"
 	"github.com/mauza/seekout/internal/sources"
 )
 
@@ -131,6 +132,11 @@ func PollSource(ctx context.Context, app core.App, src *core.Record) (Stats, err
 			continue
 		}
 		stats.New++
+
+		// Pricing first, so seekers asking for a deal see attrs.deal.
+		if Pricing != nil {
+			priceListing(ctx, app, src, rec, seekers)
+		}
 
 		for _, seeker := range seekers {
 			if !seekerApplies(seeker, src, rec.GetString("kind")) {
@@ -312,6 +318,9 @@ func alertBody(rec *core.Record, res match.Result) string {
 	}
 	if why := res.Explain(); why != "" {
 		body += "\n" + why
+	}
+	if deal := pricing.DealLine(rec); deal != "" {
+		body += "\n" + deal
 	}
 	return body
 }

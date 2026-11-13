@@ -137,6 +137,35 @@ a.item-title:hover { color: var(--accent); }
   white-space: nowrap; cursor: help;
 }
 .item-meta .item-badges { margin-left: auto; }
+.deal {
+  padding: 0.08rem 0.5rem;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  font-size: 0.78rem; color: var(--fg-muted); font-variant-numeric: tabular-nums;
+  white-space: nowrap; cursor: help;
+}
+.deal-good { background: var(--ok-soft); border-color: transparent; color: var(--ok); font-weight: 600; }
+
+/* search editor: good deals switch */
+.deal-field { gap: 0.4rem; }
+.deal-opts { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; color: var(--fg-muted); }
+.deal-opts input { width: 4.5rem; }
+
+/* prices page */
+.price-facts .fact { white-space: normal; }
+.price-detail { grid-column: 1 / -1; display: grid; gap: 0.45rem; padding-top: 0.4rem; border-top: 1px solid var(--line); }
+.price-h { margin: 0.4rem 0 0; font-size: 0.85rem; font-weight: 600; }
+.price-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+.price-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto 6.5rem; gap: 0.2rem 0.9rem; align-items: baseline;
+  padding: 0.3rem 0.1rem; border-bottom: 1px solid var(--line); font-size: 0.84rem;
+}
+.price-row a { color: inherit; }
+@media (max-width: 640px) {
+  .price-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .price-row > :first-child { grid-column: 1 / -1; }
+}
 
 .thumb {
   width: 96px; height: 72px; flex: none;

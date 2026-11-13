@@ -24,7 +24,8 @@ const OP_LABELS = {
 // Soft conditions trade off against each other (see internal/match); only
 // ordering ops can be soft, since they say which direction is better.
 const SOFT_OPS = [">", ">=", "<", "<="];
-const LISTING_FIELDS = ["title", "price", "url", "kind", "description", "external_id", "published"];
+const LISTING_FIELDS = ["title", "price", "url", "kind", "description", "external_id", "published",
+  "deal.pct_below", "deal.unit_price", "deal.typical", "deal.confidence", "deal.item_name"];
 const PAGE = 30;
 
 const state = {
@@ -153,6 +154,26 @@ function statusBadge(attrs) {
   if (!s) return "";
   const tone = /^(ACTIVE|COMING SOON)$/.test(s) ? "badge-ok" : /SOLD|WITHDRAWN|OFF MARKET|EXPIRED/.test(s) ? "badge-err" : "badge-warn";
   return `<span class="badge ${tone}">${esc(s.toLowerCase())}</span>`;
+}
+
+// perUnit formats a unit price: "$9.38/GB", "$650 each".
+function perUnit(p, unit) {
+  if (typeof p !== "number") return "";
+  const s = p >= 100 ? `$${Math.round(p).toLocaleString()}` : `$${p.toFixed(2)}`;
+  return !unit || unit === "each" ? `${s} each` : `${s}/${unit}`;
+}
+
+// dealChip shows how a priced listing compares with the typical price for
+// its item (attrs.deal, written by the pricing step).
+function dealChip(attrs) {
+  const d = attrs?.deal;
+  if (!d || typeof d.pct_below !== "number") return "";
+  const good = d.pct_below >= DEAL_DEFAULT && d.confidence !== "low";
+  const pct = Math.round(Math.abs(d.pct_below));
+  const label = d.pct_below >= 0.5 ? `${pct}% under typical` : d.pct_below <= -0.5 ? `${pct}% over typical` : "typical price";
+  const title = `${perUnit(d.unit_price, d.unit)} vs typical ${perUnit(d.typical, d.unit)} for ${d.item_name} ` +
+    `(${d.basis}, ${d.comps} comps, ${d.confidence} confidence)`;
+  return `<span class="deal ${good ? "deal-good" : ""}" title="${esc(title)}">${esc(label)}</span>`;
 }
 
 // thumb is a listing photo; a broken one becomes a blank tile. Cards leave
@@ -699,7 +720,7 @@ function previewRow(l) {
       ${thumb(l.image)}
       <span class="preview-text">
         <span class="truncate"><b>${esc(l.title || "(untitled)")}</b></span>
-        <span class="facts">${l.price > 0 ? `<span class="fact">${esc(money(l.price))}</span>` : ""}${factChips(l.attrs)}</span>
+        <span class="facts">${l.price > 0 ? `<span class="fact">${esc(money(l.price))}</span>` : ""}${dealChip(l.attrs)}${factChips(l.attrs)}</span>
       </span>
       ${score}
     </a>`;
@@ -760,9 +781,24 @@ function seekerPreview(read) {
   };
 }
 
+// "Good deals only" is two ordinary conditions on attrs.deal. The editor
+// shows them as one switch; splitDeal pulls them out of a stored list and
+// dealConditions puts them back.
+const DEAL_DEFAULT = 15;
+function splitDeal(conds) {
+  const pctCond = conds.find((c) => c.field === "deal.pct_below" && c.op === ">=" && !c.soft);
+  if (!pctCond) return { pct: null, rest: conds };
+  const rest = conds.filter((c) => c !== pctCond && !(c.field === "deal.confidence" && c.op === "in"));
+  return { pct: Number(pctCond.value), rest };
+}
+const dealConditions = (pct) => [
+  { field: "deal.pct_below", op: ">=", value: pct },
+  { field: "deal.confidence", op: "in", value: "high,medium" },
+];
+
 function seekerModal(seeker) {
   const editing = Boolean(seeker);
-  const conds = Array.isArray(seeker?.conditions) ? seeker.conditions : [];
+  const { pct: dealPct, rest: conds } = splitDeal(Array.isArray(seeker?.conditions) ? seeker.conditions : []);
 
   const body = el(`
     <div class="stack">
@@ -785,6 +821,16 @@ function seekerModal(seeker) {
         <datalist id="field-suggestions">
           ${[...LISTING_FIELDS, ...state.attrKeys].map((f) => `<option value="${esc(f)}">`).join("")}
         </datalist>
+      </div>
+      <div class="field deal-field">
+        <label class="row switch-row">
+          <span class="switch"><input type="checkbox" data-deal ${dealPct !== null ? "checked" : ""}><span class="track"></span></span>
+          <span>Good deals only</span>
+        </label>
+        <label class="deal-opts small" ${dealPct !== null ? "" : "hidden"}>At least
+          <input type="number" data-deal-pct min="1" max="90" step="1" value="${esc(dealPct ?? DEAL_DEFAULT)}" aria-label="Percent under typical">
+          % under the typical price</label>
+        <p class="hint">Typical is what this kind of item goes for in recent listings, checked against web prices every few days. It is per unit (per GB for memory), so different sizes compare. Listings that can't be priced, like whole systems on a parts search, won't match.</p>
       </div>
       <div data-preview></div>
       <div class="field" data-alerters>
@@ -821,11 +867,20 @@ function seekerModal(seeker) {
   const enabled = switchField("Active: check new listings against this search", seeker ? seeker.enabled : true);
   body.append(enabled);
 
-  const read = () => ({
-    kind: body.querySelector('[name="kind"]').value,
-    sources: checked(sourcesGrid),
-    conditions: [...editor.querySelectorAll(".cond-row")].map(conditionFromRow).filter((c) => c.field),
+  const dealOn = body.querySelector("[data-deal]");
+  const dealPctInput = body.querySelector("[data-deal-pct]");
+  dealOn.addEventListener("change", () => {
+    body.querySelector(".deal-opts").hidden = !dealOn.checked;
   });
+  const read = () => {
+    const conditions = [...editor.querySelectorAll(".cond-row")].map(conditionFromRow).filter((c) => c.field);
+    if (dealOn.checked) conditions.push(...dealConditions(Number(dealPctInput.value) || DEAL_DEFAULT));
+    return {
+      kind: body.querySelector('[name="kind"]').value,
+      sources: checked(sourcesGrid),
+      conditions,
+    };
+  };
   const preview = seekerPreview(read);
   body.querySelector("[data-preview]").replaceWith(preview.box);
   body.addEventListener("input", (e) => {
@@ -1114,7 +1169,7 @@ function listingCard(l) {
           <a class="item-title" ${l.url ? `href="${esc(l.url)}" target="_blank" rel="noopener"` : ""}>${esc(l.title || "(untitled)")}</a>
           ${l.price > 0 ? `<span class="price tnum">${esc(money(l.price))}</span>` : ""}
         </div>
-        <div class="facts">${statusBadge(attrs)}${factChips(attrs)}</div>
+        <div class="facts">${statusBadge(attrs)}${dealChip(attrs)}${factChips(attrs)}</div>
         <div class="item-meta">
           <span>${esc(l.expand?.source?.name || sourceName(l.source))}</span>
           <span title="${esc(absTime(l.created))}">found ${esc(timeAgo(l.created))}</span>
@@ -1192,6 +1247,107 @@ async function viewListings() {
     render().catch((err) => toast(apiError(err), "err"));
   });
   await render();
+}
+
+/* ---- prices (price-tracked items) ---- */
+
+function priceStats(it) {
+  const parts = [];
+  const e = it.estimate;
+  if (e) parts.push(`<span class="fact" title="${esc(`${e.basis}, ${e.confidence} confidence`)}">typical <b>${esc(perUnit(e.typical, it.unit))}</b></span>`);
+  parts.push(`<span class="fact">${esc(plural(it.comps, "listing"))} in 30 days${it.comps ? ` · median ${esc(perUnit(it.comps_median, it.unit))}` : ""}</span>`);
+  const a = it.anchor;
+  if (a?.status === "ok") {
+    parts.push(`<span class="fact" title="${esc(`web research ${absTime(a.created)}: ${a.n_used} used and ${a.n_new} new prices`)}">web ${esc(perUnit(a.typical, it.unit))}
+      <span class="dim">(${esc(perUnit(a.low, it.unit))}–${esc(perUnit(a.high, it.unit))}${a.new ? ` · new ${esc(perUnit(a.new, it.unit))}` : ""})</span></span>`);
+  } else if (a) {
+    parts.push(`<span class="fact dim">web research: ${esc(a.status === "no_data" ? "no prices found" : "failed")}</span>`);
+  } else {
+    parts.push(`<span class="fact dim">not researched yet</span>`);
+  }
+  return parts.join("");
+}
+
+function priceDetail(d) {
+  const unit = d.unit;
+  const obs = d.observations.map((o) => `
+    <li class="price-row ${o.repost ? "dim" : ""}">
+      <a class="truncate" ${o.url ? `href="${esc(o.url)}" target="_blank" rel="noopener"` : ""}>${esc(o.label || o.title)}</a>
+      <span class="tnum">${esc(money(o.total_price))}${o.quantity > 1 ? ` for ${o.quantity}` : ""}${unit !== "each" ? ` · ${o.quantity > 1 ? `${o.quantity}×` : ""}${o.amount} ${esc(unit)}` : ""}</span>
+      <b class="tnum">${esc(perUnit(o.unit_price, unit))}</b>
+      <span class="small dim" title="${esc(absTime(o.observed_at))}">${esc(timeAgo(o.observed_at))}${o.repost ? " · repost" : ""}</span>
+    </li>`).join("");
+  const ref = d.refs.find((r) => r.status === "ok");
+  const cites = ref ? (ref.citations || []).map((c) => `
+    <li class="price-row">
+      <a class="truncate" href="${esc(c.url)}" target="_blank" rel="noopener" title="${esc(c.quote)}">${esc(c.product || c.title || c.url)}</a>
+      <span class="tnum">${esc(money(c.price))}${unit !== "each" ? ` · ${c.amount} ${esc(unit)}` : ""}</span>
+      <b class="tnum">${esc(perUnit(c.unit_price, unit))}</b>
+      <span class="small dim">${esc(c.condition)}</span>
+    </li>`).join("") : "";
+  return `
+    ${d.description ? `<p class="small muted">${esc(d.description)}</p>` : ""}
+    <h4 class="price-h">Listings</h4>
+    ${obs ? `<ul class="price-list">${obs}</ul>` : `<p class="small muted">None in the last 90 days.</p>`}
+    <h4 class="price-h">Web prices${ref ? ` <span class="small dim">${esc(timeAgo(ref.created))}${ref.rejected ? ` · ${ref.rejected} unverified dropped` : ""}</span>` : ""}</h4>
+    ${cites ? `<ul class="price-list">${cites}</ul>` : `<p class="small muted">${d.refs.length ? "The last research found no verifiable prices." : "Not researched yet; research runs daily for items due."}</p>`}`;
+}
+
+async function viewPrices() {
+  setHead("Prices", "What each kind of item goes for: recent listings, anchored by web prices. Searches with \"Good deals only\" compare against these.");
+  const box = el(`<div class="view-inner stack-sm"></div>`);
+  box.append(...skeletons(3).children);
+  $("view").replaceChildren(box);
+  const res = await pb.send("/api/seekout/items", {});
+  box.replaceChildren();
+  if (!res.items.length) {
+    box.append(emptyState(ICON_LIST, res.enabled ? "Nothing priced yet" : "Price tracking is off",
+      res.enabled
+        ? "Listings your searches want are priced as they arrive. Items show up here after the first one."
+        : "The server has no LLM configured, so listings aren't being priced."));
+    return;
+  }
+  for (const it of res.items) {
+    const card = el(`
+      <article class="card">
+        <div class="item">
+          <div class="item-head">
+            <div class="item-title"><span>${esc(it.name)}</span></div>
+            <div class="item-meta">
+              <span>per ${esc(it.unit === "each" ? "item" : it.unit)}${it.category ? ` · ${esc(it.category)}` : ""}</span>
+              <span title="${esc(absTime(it.last_observed))}">last seen ${esc(timeAgo(it.last_observed))}</span>
+            </div>
+            <div class="facts price-facts">${priceStats(it)}</div>
+          </div>
+          <div class="item-actions"><button class="btn btn-sm" data-more aria-expanded="false">Details</button></div>
+          <div class="price-detail" hidden></div>
+        </div>
+      </article>`);
+    const more = card.querySelector("[data-more]");
+    const detail = card.querySelector(".price-detail");
+    more.addEventListener("click", async () => {
+      if (!detail.hidden) {
+        detail.hidden = true;
+        more.setAttribute("aria-expanded", "false");
+        more.textContent = "Details";
+        return;
+      }
+      if (!detail.dataset.loaded) {
+        detail.innerHTML = `<span class="spinner"></span>`;
+        detail.hidden = false;
+        try {
+          detail.innerHTML = priceDetail(await pb.send(`/api/seekout/items/${it.id}`, {}));
+          detail.dataset.loaded = "1";
+        } catch (err) {
+          detail.innerHTML = `<div class="error-note">${esc(apiError(err))}</div>`;
+        }
+      }
+      detail.hidden = false;
+      more.setAttribute("aria-expanded", "true");
+      more.textContent = "Hide";
+    });
+    box.append(card);
+  }
 }
 
 /* ---- notifications (alerters) ---- */
@@ -1404,6 +1560,7 @@ const ROUTES = {
   seekers: viewSeekers,
   sources: viewSources,
   listings: viewListings,
+  prices: viewPrices,
   alerters: viewAlerters,
   invites: viewInvites,
 };

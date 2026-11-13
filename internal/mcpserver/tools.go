@@ -14,6 +14,7 @@ import (
 
 	"github.com/mauza/seekout/internal/match"
 	"github.com/mauza/seekout/internal/pipeline"
+	"github.com/mauza/seekout/internal/pricing"
 	"github.com/mauza/seekout/internal/sources"
 )
 
@@ -112,6 +113,10 @@ type okOut struct {
 // ---------------------------------------------------------------------------
 
 type noArgs struct{}
+
+type itemsOut struct {
+	Items []pricing.ItemSummary `json:"items"`
+}
 
 type idArg struct {
 	ID string `json:"id" jsonschema:"record id"`
@@ -397,6 +402,32 @@ func registerTools(s *mcp.Server, app core.App) {
 				return nil, okOut{}, err
 			}
 			return nil, okOut{OK: true}, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "list_items", Annotations: ro,
+		Description: "List price-tracked items (groups of comparable products, priced per unit) seen in the last 90 days, with comps, latest web research and the current typical-price estimate."},
+		func(ctx context.Context, req *mcp.CallToolRequest, _ noArgs) (*mcp.CallToolResult, itemsOut, error) {
+			if _, err := userID(req); err != nil {
+				return nil, itemsOut{}, err
+			}
+			items, err := pricing.Items(app, 90, 30*24*time.Hour)
+			if err != nil {
+				return nil, itemsOut{}, err
+			}
+			return nil, itemsOut{Items: items}, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "get_item", Annotations: ro,
+		Description: "One price-tracked item: its observations (priced listing lines, reposts marked) from the last 90 days and its last 10 web-research results with verified citations."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in idArg) (*mcp.CallToolResult, pricing.ItemDetail, error) {
+			if _, err := userID(req); err != nil {
+				return nil, pricing.ItemDetail{}, err
+			}
+			d, err := pricing.Item(app, in.ID, 90, 30*24*time.Hour)
+			if err != nil {
+				return nil, pricing.ItemDetail{}, notFound("item", in.ID, err)
+			}
+			return nil, d, nil
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "list_alerts", Annotations: ro,

@@ -18,13 +18,17 @@ The record types, all PocketBase collections (`migrations/`):
 | `alerters` | per user | a notification target: a type (`ntfy`, `webhook`) and its `config` |
 | `alerts` | per user | one record per (seeker, listing) match, with per-alerter delivery results |
 | `invites` | admins | one-time signup codes |
+| `items` | shared, server writes | a price-comparison group listings are filed under, priced per unit (`GB`, `each`, ...) |
+| `price_observations` | shared, server writes | one priced line of a listing: item, quantity, amount per piece, unit price |
+| `price_refs` | shared, server writes | a web-research anchor for an item, with its verified citations |
 
 One data path, `internal/pipeline.PollSource`, run per source by the minute
 cron (when its interval is due), the UI's "poll now" and MCP `poll_source`:
 
 ```
 source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
-  → store → evaluate every enabled seeker → alert record + alerter fan-out
+  → store → price (if a seeker wants it) → evaluate every enabled seeker
+  → alert record + alerter fan-out
 ```
 
 - A source's first poll only stores its backlog (`seeded`); alerts start with
@@ -41,6 +45,62 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
   few with their soft scores) and MCP `search_listings`. It scans at most the
   newest 5000 listings.
 
+## Prices and good deals
+
+`internal/pricing`, on when `SEEKOUT_LLM_URL` and `SEEKOUT_LLM_KEY` are set
+(the LiteLLM gateway). Nothing in it is specific to one kind of item.
+
+- **Which listings.** A new listing is priced when some enabled seeker would
+  match it with its deal and `price` conditions left out (so comps are the
+  whole market, not what fit a budget). Homes are never priced.
+- **Classify** (`SEEKOUT_CLASSIFY_MODEL`, default `gpt-6-luna`). The model
+  files the listing under an existing item or proposes one. An item is
+  priced per unit chosen so sizes pool: "DDR5 desktop memory (UDIMM)" per
+  GB takes a 16 GB stick and a 64 GB kit alike. Each line gets a quantity
+  (pieces; a kit is one) and an amount per piece, so unit price = price /
+  (quantity × amount). Verdicts other than `items` aren't priced: `bundle`
+  (a whole PC on a memory search), `off_target`, `unclear` (e.g. no
+  capacity given). Structured output is a forced tool call: the gateway
+  drops `response_format` for the ChatGPT models but keeps tools.
+- **Reposts.** Dealers repost the same ad daily under new ids. A listing
+  with the same title and price as one filed in the last 60 days copies its
+  filing (no model call), and comps count one per ad (`dedupe_key`).
+- **Research** (`SEEKOUT_RESEARCH_MODEL`, default `gpt-6.1-sol`;
+  `SEEKOUT_SEARXNG_URL`). A daily cron researches items seen in the last 14
+  days whose last research is `SEEKOUT_RESEARCH_EVERY_DAYS` (4) old, up to
+  `SEEKOUT_RESEARCH_MAX` (20) a run: SearXNG queries for the item and its
+  most-listed products, the top result pages fetched through `netguard`,
+  and the model reports each price with a quote. A price only counts when
+  its quote is in the fetched text and states the price. The anchor is the
+  used band from used prices (2+), else derived from new retail (used ≈ 0.8 ×
+  new).
+- **Estimate.** Comps are the item's other listings from the 30 days
+  before. With a used-price anchor and 3+ comps, typical = comps median
+  clamped to the anchor's band (high confidence when they agree within
+  25%); that anchor alone is medium (low on fewer than 3 prices). An anchor
+  derived from new retail only caps typical, and alone is low confidence:
+  it says little about used prices. 5+ comps alone are medium, fewer low.
+  Typical never exceeds new retail. A listing more than 50% under typical is
+  marked `suspect` at low confidence (misfiled parts and misread amounts
+  look like that far more often than real deals).
+- **The listing** gets `attrs.pricing` (`status`, `reason`, retry
+  `attempts`) and, when priced, `attrs.deal`: `item_name, unit, unit_price,
+  typical, pct_below, basis, comps, confidence, ...`. Alerts add a line:
+  `Deal: $7.81/GB vs typical $10.00/GB, 22% under (comps+anchor, 7 comps,
+  high)`.
+- **Asking for a deal** is ordinary conditions, which the editor's "Good
+  deals only" switch writes: `deal.pct_below >= 15` and `deal.confidence in
+  high,medium`. A listing that couldn't be priced has no `attrs.deal` and
+  fails them.
+- **Failures.** A classifier error never holds up the poll: the listing is
+  stored with status `pending`, seekers without deal conditions are decided
+  as usual, and an hourly cron retries pending listings from the last 24
+  hours (3 attempts) and alerts the deal seekers they now match.
+- **By hand:** `seekout pricing backfill --days 30` files stored listings
+  and reprices them (no alerts); `seekout pricing research [--item ID]`;
+  `seekout pricing reprice --days 30`. The Prices page and MCP
+  `list_items` / `get_item` show items, observations and citations.
+
 ## Source layout
 
 - `main.go` — bootstrap, cron, custom routes, embedded static UI
@@ -53,6 +113,8 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
   `webhook.go`
 - `internal/match` — seeker conditions: validation and evaluation
 - `internal/pipeline` — the data path above
+- `internal/pricing` — price tracking: classify, observations, research,
+  estimate (see "Prices and good deals")
 - `internal/netguard` — the HTTP client for user-supplied URLs; refuses
   internal addresses
 - `internal/hooks` — record rules the API rules can't express (conditions,

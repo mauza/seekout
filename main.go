@@ -25,7 +25,9 @@ import (
 	"github.com/mauza/seekout/internal/listing"
 	"github.com/mauza/seekout/internal/match"
 	"github.com/mauza/seekout/internal/mcpserver"
+	"github.com/mauza/seekout/internal/netguard"
 	"github.com/mauza/seekout/internal/pipeline"
+	"github.com/mauza/seekout/internal/pricing"
 	"github.com/mauza/seekout/internal/sources"
 	_ "github.com/mauza/seekout/migrations"
 )
@@ -34,7 +36,7 @@ import (
 var webFS embed.FS
 
 // version is reported to MCP clients; keep it in step with the image tag.
-const version = "0.9.0"
+const version = "0.10.0"
 
 func main() {
 	app := pocketbase.New()
@@ -49,7 +51,11 @@ func main() {
 		return appsettings.Apply(app)
 	})
 
-	app.RootCmd.AddCommand(mcpTokenCmd(app), adminCmd(app))
+	// Price tracking is on when an LLM is configured. Result pages fetched
+	// during research come from the web, so they go through netguard.
+	pipeline.Pricing = pricing.FromEnv(netguard.Client)
+
+	app.RootCmd.AddCommand(mcpTokenCmd(app), adminCmd(app), pricingCmd(app))
 
 	// Record rules the collection API rules can't express (seeker conditions,
 	// alerter ownership, per-type config); they cover the REST API, MCP and
@@ -62,6 +68,33 @@ func main() {
 		pipeline.PollDue(ctx, app)
 	}); err != nil {
 		log.Fatal(err)
+	}
+
+	if pipeline.Pricing != nil {
+		// Listings whose classification failed get another go each hour.
+		if err := app.Cron().Add("pricing_retry", "17 * * * *", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer cancel()
+			if _, err := pipeline.RetryPricing(ctx, app); err != nil {
+				app.Logger().Error("pricing retry", "error", err)
+			}
+		}); err != nil {
+			log.Fatal(err)
+		}
+		// Daily; each item is researched once per SEEKOUT_RESEARCH_EVERY_DAYS.
+		if err := app.Cron().Add("pricing_research", "0 11 * * *", func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+			defer cancel()
+			n, err := pipeline.Pricing.ResearchDue(ctx, app)
+			if err != nil {
+				app.Logger().Error("pricing research", "items", n, "error", err)
+			}
+			if _, err := pipeline.Reprice(app, 7); err != nil {
+				app.Logger().Error("pricing reprice", "error", err)
+			}
+		}); err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	app.OnServe().BindFunc(func(se *core.ServeEvent) error {
@@ -125,6 +158,23 @@ func main() {
 				return e.BadRequestError("poll failed", err)
 			}
 			return e.JSON(http.StatusOK, stats)
+		}).Bind(apis.RequireAuth())
+
+		// Price tracking: items with their current estimate, and one
+		// item's observations and research. Shared data, like listings.
+		se.Router.GET("/api/seekout/items", func(e *core.RequestEvent) error {
+			items, err := pricing.Items(app, 90, 30*24*time.Hour)
+			if err != nil {
+				return e.InternalServerError("items", err)
+			}
+			return e.JSON(http.StatusOK, map[string]any{"items": items, "enabled": pipeline.Pricing != nil})
+		}).Bind(apis.RequireAuth())
+		se.Router.GET("/api/seekout/items/{id}", func(e *core.RequestEvent) error {
+			d, err := pricing.Item(app, e.Request.PathValue("id"), 90, 30*24*time.Hour)
+			if err != nil {
+				return e.NotFoundError("item not found", err)
+			}
+			return e.JSON(http.StatusOK, d)
 		}).Bind(apis.RequireAuth())
 
 		// Send a test notification through one of the caller's alerters.
@@ -276,5 +326,79 @@ func mcpTokenCmd(app *pocketbase.PocketBase) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&days, "days", 365, "token lifetime in days")
+	return cmd
+}
+
+// pricingCmd runs price tracking by hand: backfill classifies stored
+// listings the seekers want and reprices them; research runs web research
+// now (for one item, or every due item); reprice recomputes deals only.
+func pricingCmd(app *pocketbase.PocketBase) *cobra.Command {
+	cmd := &cobra.Command{Use: "pricing", Short: "Price tracking: backfill, research, reprice"}
+	boot := func() error {
+		if pipeline.Pricing == nil {
+			return errors.New("pricing is off: set SEEKOUT_LLM_URL and SEEKOUT_LLM_KEY")
+		}
+		if err := app.Bootstrap(); err != nil {
+			return err
+		}
+		return app.RunAllMigrations()
+	}
+	var days int
+	var redo []string
+	backfill := &cobra.Command{
+		Use: "backfill", Short: "Classify and price stored listings from the last --days days", SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := boot(); err != nil {
+				return err
+			}
+			st, err := pipeline.Backfill(cmd.Context(), app, days, redo, func(s string) { fmt.Println(s) })
+			fmt.Printf("scanned %d, filed %d, failed %d, not wanted %d, repriced %d\n", st.Scanned, st.Filed, st.Failed, st.NotWanted, st.Repriced)
+			return err
+		},
+	}
+	backfill.Flags().IntVar(&days, "days", 30, "look back this many days")
+	backfill.Flags().StringSliceVar(&redo, "redo", nil, "classify listings with these statuses again from scratch (ok,bundle,off_target,unclear,failed)")
+
+	var item string
+	research := &cobra.Command{
+		Use: "research", Short: "Research due items now (or --item <id>, due or not)", SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := boot(); err != nil {
+				return err
+			}
+			if item == "" {
+				n, err := pipeline.Pricing.ResearchDue(cmd.Context(), app)
+				fmt.Printf("researched %d item(s)\n", n)
+				return err
+			}
+			it, err := app.FindRecordById("items", item)
+			if err != nil {
+				return fmt.Errorf("item %q: %w", item, err)
+			}
+			ref, err := pipeline.Pricing.Research(cmd.Context(), app, it)
+			if ref != nil {
+				fmt.Printf("%s: %s typical %.4g low %.4g high %.4g new %.4g (%d new, %d used, %d rejected)\n",
+					it.GetString("name"), ref.GetString("status"), ref.GetFloat("typical"), ref.GetFloat("low"),
+					ref.GetFloat("high"), ref.GetFloat("new_typical"), ref.GetInt("n_new"), ref.GetInt("n_used"), ref.GetInt("rejected"))
+			}
+			return err
+		},
+	}
+	research.Flags().StringVar(&item, "item", "", "item id")
+
+	reprice := &cobra.Command{
+		Use: "reprice", Short: "Recompute deals for priced listings from the last --days days", SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := boot(); err != nil {
+				return err
+			}
+			n, err := pipeline.Reprice(app, days)
+			fmt.Printf("repriced %d listing(s)\n", n)
+			return err
+		},
+	}
+	reprice.Flags().IntVar(&days, "days", 30, "look back this many days")
+
+	cmd.AddCommand(backfill, research, reprice)
 	return cmd
 }
