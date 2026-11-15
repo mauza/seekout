@@ -1,7 +1,7 @@
 # seekout
 
-Listing alerts: poll sources (RSS feeds, the Utah MLS via utahrealestate.com),
-match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
+Listing alerts: poll sources (RSS feeds, the Utah MLS via utahrealestate.com,
+KSL classifieds and cars), match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
 
 Single Go binary with PocketBase embedded: DB, auth, REST + realtime API,
 admin UI at `/_/`, the webapp, and an MCP server for agents at `/mcp`.
@@ -12,7 +12,7 @@ The record types, all PocketBase collections (`migrations/`):
 
 | collection | owner | what it is |
 |---|---|---|
-| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`), its `config`, a listing `kind`, an interval |
+| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`, `ksl`), its `config`, a listing `kind`, an interval |
 | `listings` | shared | one normalized item a source produced (`internal/listing`): typed columns plus free-form `attrs` |
 | `seekers` | per user | a saved search: optional kind and source allow-list, conditions, the alerters to notify |
 | `alerters` | per user | a notification target: a type (`ntfy`, `webhook`) and its `config` |
@@ -109,7 +109,7 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
 - `internal/plugin` — `Info`/`Field`: how a source or alerter type describes
   its config (drives validation, the UI's forms and the MCP docs)
 - `internal/sources` — `Source` (+ optional `Enricher`) interface and
-  registry; `rss.go`, `ure.go`
+  registry; `rss.go`, `ure.go`, `ksl.go`
 - `internal/alerters` — `Alerter` interface and registry; `ntfy.go`,
   `webhook.go`
 - `internal/match` — seeker conditions: validation and evaluation
@@ -423,17 +423,25 @@ prove the data survives (`SEEKOUT_SKIP_RESTART=1` to skip).
 ## Deploy
 
 Bump `version` in `main.go` (MCP clients see it) to match the image tag,
-build multi-arch and push to Harbor, then bump the pin in
-`~/Projects/home-k8s/apps/seekout/deployment.yaml` and let ArgoCD sync:
+commit and push `main`, build multi-arch and push to Harbor, then bump the
+pin in `~/Projects/home-k8s/apps/seekout/deployment.yaml` with `ship-pin`
+(commits, pushes and waits for ArgoCD):
 
 ```sh
-# The shared "multiarch" builder times out pushing to Harbor; use a
-# throwaway host-network builder (BuildKit carries its own arm64 qemu).
-docker buildx create --name seekout-build --driver-opt network=host
-docker buildx build --builder seekout-build --platform linux/amd64,linux/arm64 \
+# The shared host-network builder (the plain "multiarch" one times out
+# pushing to Harbor); `docker buildx ls` should list it.
+docker buildx build --builder multiarch-hostnet --platform linux/amd64,linux/arm64 \
   -t docker.mau.guru/library/seekout:X.Y.Z --push .
-docker buildx rm seekout-build
+
+cd ~/Projects/home-k8s
+grep -n 'seekout:' apps/seekout/deployment.yaml   # read the current pin first
+ship-pin -a seekout -m "seekout X.Y.Z: <why>" \
+  docker.mau.guru/library/seekout:<old> docker.mau.guru/library/seekout:X.Y.Z \
+  apps/seekout/deployment.yaml
 ```
+
+Then check `curl -fsS https://seekout.mau.guru/api/health`. Logs are in
+PocketBase's `_logs` table (`GET /api/logs` as superuser), not stdout.
 
 The cluster has arm64 workers, so images must be multi-arch — an amd64-only
 image crash-loops with `exec format error`. Replicas must stay 1 with the
