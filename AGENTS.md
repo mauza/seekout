@@ -1,7 +1,7 @@
 # Working on seekout
 
 Listing alerts: sources (RSS, utahrealestate.com `ure`, KSL classifieds/cars
-`ksl`) → seekers → alerters (ntfy, webhook), plus price tracking and an MCP
+`ksl`, flight deals `farewatch`) → seekers → alerters (ntfy, webhook), plus price tracking and an MCP
 server. One Go binary with embedded PocketBase. Live at
 https://seekout.mau.guru, namespace `seekout`, ArgoCD app `seekout`, manifests
 `~/Projects/home-k8s/apps/seekout` (see that repo's `AGENTS.md` for deploy

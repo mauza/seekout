@@ -22,9 +22,9 @@ var Pricing *pricing.Service
 // conditions left out: the ones that would want to know its price. Price
 // conditions are left out so comps are the whole market, not just what fit
 // a budget (a "trucks under $50k" search would otherwise only ever see
-// sub-$50k trucks, and call that typical). Homes are not priced.
+// sub-$50k trucks, and call that typical). Homes and flights are not priced.
 func pricingSeekers(app core.App, src, rec *core.Record, seekers []*core.Record) []*core.Record {
-	if rec.GetString("kind") == "home" {
+	if kind := rec.GetString("kind"); kind == "home" || kind == "flight" {
 		return nil
 	}
 	var out []*core.Record

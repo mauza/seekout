@@ -7,7 +7,7 @@ import "time"
 // can narrow to ("any" on a seeker means all of them). Adding one here is
 // enough: boot adds it to the kind selects of sources, listings and seekers,
 // and the web UI reads the list from /api/seekout/plugins.
-var Kinds = []string{"home", "car", "classified", "other"}
+var Kinds = []string{"home", "car", "classified", "other", "flight"}
 
 // Listing is the source-agnostic shape a poll produces. Kind is assigned by
 // the pipeline from the source record, not by the source itself.

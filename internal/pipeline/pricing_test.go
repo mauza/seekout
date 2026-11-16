@@ -224,7 +224,7 @@ func TestPricingRetryAlertsLate(t *testing.T) {
 	}
 }
 
-// Homes are never priced, and nothing is priced for a listing no seeker
+// Homes and flights are never priced, and nothing is priced for a listing no seeker
 // would want (only the deal conditions are left out of that check).
 func TestPricingOnlyWhatSeekersWant(t *testing.T) {
 	f := &fakeClassifier{gb: map[string]float64{}}
@@ -245,6 +245,13 @@ func TestPricingOnlyWhatSeekersWant(t *testing.T) {
 	save(t, app, "seekers", map[string]any{"user": user.Id, "name": "all", "kind": "any", "enabled": true})
 	fake.listings = []listing.Listing{{ExternalID: "h", Title: "House", Price: 500000}}
 	if _, err := PollSource(context.Background(), app, homes); err != nil {
+		t.Fatal(err)
+	}
+	flights := save(t, app, "sources", map[string]any{
+		"name": "flights", "type": "fake", "kind": "flight", "interval_minutes": 30, "enabled": true, "seeded": true,
+	})
+	fake.listings = []listing.Listing{{ExternalID: "f", Title: "SLC→SAN", Price: 1298}}
+	if _, err := PollSource(context.Background(), app, flights); err != nil {
 		t.Fatal(err)
 	}
 	if n := f.calls.Load(); n != 0 {

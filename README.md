@@ -1,7 +1,7 @@
 # seekout
 
 Listing alerts: poll sources (RSS feeds, the Utah MLS via utahrealestate.com,
-KSL classifieds and cars), match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
+KSL classifieds and cars, Farewatch flight deals), match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
 
 Single Go binary with PocketBase embedded: DB, auth, REST + realtime API,
 admin UI at `/_/`, the webapp, and an MCP server for agents at `/mcp`.
@@ -12,7 +12,7 @@ The record types, all PocketBase collections (`migrations/`):
 
 | collection | owner | what it is |
 |---|---|---|
-| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`, `ksl`), its `config`, a listing `kind`, an interval |
+| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`, `ksl`, `farewatch`), its `config`, a listing `kind`, an interval |
 | `listings` | shared | one normalized item a source produced (`internal/listing`): typed columns plus free-form `attrs` |
 | `seekers` | per user | a saved search: optional kind and source allow-list, conditions, the alerters to notify |
 | `alerters` | per user | a notification target: a type (`ntfy`, `webhook`) and its `config` |
@@ -52,7 +52,7 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
 
 - **Which listings.** A new listing is priced when some enabled seeker would
   match it with its deal and `price` conditions left out (so comps are the
-  whole market, not what fit a budget). Homes are never priced.
+  whole market, not what fit a budget). Homes and flights are never priced.
 - **Classify** (`SEEKOUT_CLASSIFY_MODEL`, default `gpt-6-luna`). The model
   files the listing under an existing item or proposes one. An item is
   priced per unit chosen so sizes pool: "DDR5 desktop memory (UDIMM)" per
@@ -109,7 +109,7 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
 - `internal/plugin` — `Info`/`Field`: how a source or alerter type describes
   its config (drives validation, the UI's forms and the MCP docs)
 - `internal/sources` — `Source` (+ optional `Enricher`) interface and
-  registry; `rss.go`, `ure.go`, `ksl.go`
+  registry; `rss.go`, `ure.go`, `ksl.go`, `farewatch.go`
 - `internal/alerters` — `Alerter` interface and registry; `ntfy.go`,
   `webhook.go`
 - `internal/match` — seeker conditions: validation and evaluation
@@ -264,6 +264,12 @@ When adding a key to the condition shape, add it to `conditionFromRow` in
 it doesn't know is silently dropped when a seeker is saved from the UI.
 
 ## Sources
+
+- `farewatch` turns deals from the internal farewatch service into flight listings.
+  Set kind `flight` and required `base_url` (normally `http://farewatch.farewatch`),
+  optional bearer `token`, optional `watch` id, and `days` (default 14, range
+  1–90). Each poll fetches up to 200 deals; farewatch supplies price history
+  and deal reasons, so flights bypass Seekout’s LLM pricing.
 
 - `rss` covers any RSS/Atom/RDF feed. Price is read from a `$` amount in the
   title. realtor.com's old `mapi-ng` API is gone (NXDOMAIN) and Craigslist
