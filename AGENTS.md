@@ -88,3 +88,7 @@ check live.
   them as superuser via `GET /api/logs` (creds: `~/.secrets/seekout.txt`, the
   prod-test account), or with `sqlite3` on a backup copy (`auxiliary.db`).
 - A source's failures land in its `last_error`; check it after source edits.
+- Every password login (`auth-with-password`, the JS SDK's `authWithPassword`) from a
+  new IP + user agent emails the account a "new location" alert, and Traefik spreads
+  you across several pod IPs. For ad-hoc prod calls, log in once per session and reuse
+  the token, or use a bearer from `seekout mcp-token`. Don't log in per request.
