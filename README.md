@@ -1,7 +1,7 @@
 # seekout
 
 Listing alerts: poll sources (RSS feeds, the Utah MLS via utahrealestate.com,
-KSL classifieds and cars, Farewatch flight deals), match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
+KSL classifieds and cars, Facebook Marketplace, Farewatch flight deals), match new listings against per-user seekers, fire alerters (ntfy, webhook/Slack).
 
 Single Go binary with PocketBase embedded: DB, auth, REST + realtime API,
 admin UI at `/_/`, the webapp, and an MCP server for agents at `/mcp`.
@@ -12,7 +12,7 @@ The record types, all PocketBase collections (`migrations/`):
 
 | collection | owner | what it is |
 |---|---|---|
-| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`, `ksl`, `farewatch`), its `config`, a listing `kind`, an interval |
+| `sources` | shared, admins change | a configured poller: a type (`rss`, `ure`, `ksl`, `fbm`, `farewatch`), its `config`, a listing `kind`, an interval |
 | `listings` | shared | one normalized item a source produced (`internal/listing`): typed columns plus free-form `attrs` |
 | `seekers` | per user | a saved search: optional kind and source allow-list, conditions, the alerters to notify |
 | `alerters` | per user | a notification target: a type (`ntfy`, `webhook`) and its `config` |
@@ -109,7 +109,7 @@ source.Poll → dedupe on (source, external_id) → Enrich (new listings only)
 - `internal/plugin` — `Info`/`Field`: how a source or alerter type describes
   its config (drives validation, the UI's forms and the MCP docs)
 - `internal/sources` — `Source` (+ optional `Enricher`) interface and
-  registry; `rss.go`, `ure.go`, `ksl.go`, `farewatch.go`
+  registry; `rss.go`, `ure.go`, `ksl.go`, `fbm.go`, `farewatch.go`
 - `internal/alerters` — `Alerter` interface and registry; `ntfy.go`,
   `webhook.go`
 - `internal/match` — seeker conditions: validation and evaluation
@@ -315,6 +315,24 @@ it doesn't know is silently dropped when a seeker is saved from the UI.
     created; renewals bump an ad up the newest sort but keep its id, so they
     don't alert again. No description (the list has none; the site's keyword
     filter already searches it). Use kind `classified` (or `car`).
+- `fbm` (Facebook Marketplace) takes a search or category URL built on the site,
+  e.g.
+  `https://www.facebook.com/marketplace/saltlakecity/search/?query=ddr5&daysSinceListed=7`
+  or `https://www.facebook.com/marketplace/saltlakecity/vehicles?maxPrice=50000`.
+  It fetches logged-out with browser `Sec-Fetch-*` headers and reads the first
+  page (up to 24 listings) out of Facebook's server-rendered Relay JSON scripts
+  (`feed_units` on search pages, `marketplace_feed_stories` on category pages).
+  - Facebook's `sortBy=creation_time_descend` mixes broad category items into
+    sparse queries, so `best_match` (default) or `daysSinceListed=7` paired with
+    seeker conditions works better. Keep poll intervals conservative (60–120m).
+  - List results carry `city`, `state`, `seller_name`, `category_id`,
+    `delivery_types`, `sold`, `pending`, `live` and `published` (`creation_time`).
+  - Set `enrich` to `on` (default `off`) to fetch each new listing's
+    `/marketplace/item/<id>/` page once (with a polite delay) for its full
+    `description`, structured attributes (`condition`, `brand`, …) and vehicle
+    fields (`make`, `model`, `trim`, `mileage`, `fuel_type`, `transmission`,
+    `title_status`, `exterior_color`, `interior_color`, `vin`, `seller_type`,
+    `dealership_name`). Removed listings are stored with `unavailable: true`.
 
 ## MCP
 

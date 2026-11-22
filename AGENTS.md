@@ -1,7 +1,7 @@
 # Working on seekout
 
 Listing alerts: sources (RSS, utahrealestate.com `ure`, KSL classifieds/cars
-`ksl`, flight deals `farewatch`) → seekers → alerters (ntfy, webhook), plus price tracking and an MCP
+`ksl`, Facebook Marketplace `fbm`, flight deals `farewatch`) → seekers → alerters (ntfy, webhook), plus price tracking and an MCP
 server. One Go binary with embedded PocketBase. Live at
 https://seekout.mau.guru, namespace `seekout`, ArgoCD app `seekout`, manifests
 `~/Projects/home-k8s/apps/seekout` (see that repo's `AGENTS.md` for deploy
@@ -60,7 +60,9 @@ Run against a copy of prod, never against prod itself:
   call: the LiteLLM gateway drops `response_format` for the ChatGPT models.
   Tests use httptest fakes for the gateway and SearXNG.
 - URE needs the page's CSRF token on every XHR (else 200 + empty body); KSL
-  needs a browser User-Agent (PerimeterX) and only page 1 is reachable.
+  needs a browser User-Agent (PerimeterX) and only page 1 is reachable; FBM
+  (`fbm`) needs Chrome `Sec-Fetch-*` headers (else 400), is logged-out page 1
+  only (up to 24 listings), and has opt-in detail-page enrichment (`enrich: on`).
 - Stored listings are never updated after first sight (status/price stale);
   `hoa_fee` is a string. Known gaps, not bugs to "fix" silently.
 - Boot upserts the superuser from the secret, which invalidates existing
